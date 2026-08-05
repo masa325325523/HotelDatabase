@@ -1,12 +1,16 @@
 /**
  * ProductionV2.gs
  * Ver2.0 公開インターフェース。
+ * 設定値は各処理の実行時に参照し、Apps Scriptのファイル読込順に依存しない。
  */
 
 const HOTEL_DB_V2 = Object.freeze({
-  config: HOTEL_DB_V2_CONFIG,
-  diagnose: hotelDbV2Diagnose_,
-  connectionTest: hotelDbV2ConnectionTest_,
+  diagnose: function() {
+    return hotelDbV2Diagnose_();
+  },
+  connectionTest: function() {
+    return hotelDbV2ConnectionTest_();
+  },
   test3: function() {
     return hotelDbV2ProcessActiveSheet_({
       startRow: 2,
@@ -31,7 +35,13 @@ const HOTEL_DB_V2 = Object.freeze({
       onlyExisting: true
     });
   },
-  resetCheckpoint: hotelDbV2ResetCheckpoint_,
-  refreshDuplicates: hotelDbV2RefreshDuplicates_,
-  applyApprovedCorrections: hotelDbV2ApplyApprovedCorrections_
+  resetCheckpoint: function() {
+    return hotelDbV2ResetCheckpoint_();
+  },
+  refreshDuplicates: function() {
+    return hotelDbV2RefreshDuplicates_();
+  },
+  applyApprovedCorrections: function() {
+    return hotelDbV2ApplyApprovedCorrections_();
+  }
 });
