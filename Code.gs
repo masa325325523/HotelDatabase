@@ -1,47 +1,38 @@
 /**
  * Code.gs
- * Google Places照合の実行入口とスプレッドシート用メニュー。
- *
- * 前提:
- * - Places.gs が同じApps Scriptプロジェクトに存在すること
- * - スクリプトプロパティ GOOGLE_PLACES_API_KEY が設定済みであること
- * - 1行目に「施設名」または「住所」の見出しがあること
+ * 全国宿泊施設データベース Ver2.0 実行入口
  */
 
-const APP_RUNNER = Object.freeze({
-  TEST_ROWS: 3,
-  DEFAULT_BATCH_SIZE: 100,
-  LOCK_TIMEOUT_MS: 5000
+const HOTEL_DB_V2_RUNNER = Object.freeze({
+  LOCK_TIMEOUT_MS: 10000
 });
 
-/**
- * スプレッドシートを開いたときに専用メニューを追加する。
- */
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('宿泊施設DB')
-    .addItem('① 設定・見出しを診断', 'runPlacesDiagnosis')
-    .addItem('② Places API接続テスト', 'runPlacesApiConnectionTest')
+    .addItem('① Ver2.0 設定・見出し診断', 'runHotelDbV2Diagnosis')
+    .addItem('② Ver2.0 API接続テスト', 'runHotelDbV2ConnectionTest')
     .addSeparator()
-    .addItem('③ 先頭3件だけテスト', 'runPlacesTest3')
-    .addItem('④ Places照合を実行', 'runPlacesOnly')
-    .addItem('⑤ 既存Place IDを再確認', 'runRefreshExistingPlaces')
+    .addItem('③ Ver2.0 先頭3件テスト', 'runHotelDbV2Test3')
+    .addItem('④ Ver2.0 本番バッチ実行（50件）', 'runHotelDbV2Batch')
+    .addItem('⑤ 保存済みPlace IDを再確認（50件）', 'runHotelDbV2RefreshExisting')
+    .addItem('⑥ 続きの開始行をリセット', 'runHotelDbV2ResetCheckpoint')
     .addSeparator()
-    .addItem('⑥ 重複候補を確認', 'runDuplicateCheck')
+    .addItem('⑦ 重複候補を更新', 'runHotelDbV2Duplicates')
+    .addItem('⑧ 承認済み修正候補を反映', 'runHotelDbV2ApplyApprovedCorrections')
     .addToUi();
 }
 
-/**
- * APIキー、対象シート、必要見出しを診断する。
- */
-function runPlacesDiagnosis() {
-  const result = diagnosePlacesConfiguration();
+function runHotelDbV2Diagnosis() {
+  const result = HOTEL_DB_V2.diagnose();
   const lines = [
-    'Places設定診断',
+    '宿泊施設DB Ver2.0 診断',
     '',
+    'API: ' + result.apiVersion,
     'APIキー: ' + (result.apiKeyConfigured ? '設定済み' : '未設定'),
     '対象シート: ' + (result.activeSheet || '取得不可'),
-    '認識した列: ' + Object.keys(result.headerMap || {}).join(', ')
+    '認識した列: ' + Object.keys(result.headerMap || {}).join(', '),
+    '本番処理の次回開始行: ' + (result.checkpoint || 2)
   ];
 
   if (result.errors && result.errors.length) {
@@ -54,147 +45,137 @@ function runPlacesDiagnosis() {
   return result;
 }
 
-/**
- * 1回だけPlaces APIへ検索を送り、接続を確認する。
- */
-function runPlacesApiConnectionTest() {
-  return withPlacesExecutionLock_('Places API接続テスト', function() {
-    const results = searchPlaceFromGoogle(
-      'ホテルルートイン名古屋今池駅前 愛知県名古屋市千種区'
-    );
-
-    if (!results || !results.length) {
-      throw new Error('検索結果がありませんでした。APIキー・API有効化・請求設定を確認してください。');
-    }
-
-    const place = results[0];
+function runHotelDbV2ConnectionTest() {
+  return withHotelDbV2Lock_('Ver2.0 API接続テスト', function() {
+    const place = HOTEL_DB_V2.connectionTest();
     SpreadsheetApp.getUi().alert([
       '接続成功',
       '',
-      '施設名: ' + safeString(place.name),
-      '住所: ' + safeString(place.formatted_address),
-      'Place ID: ' + safeString(place.place_id),
-      '営業状態: ' + translateBusinessStatus(place.business_status)
+      '施設名: ' + place.name,
+      '住所: ' + place.address,
+      'Place ID: ' + place.placeId,
+      '営業状態: ' + place.status
     ].join('\n'));
-
     return place;
   });
 }
 
-/**
- * アクティブシートの先頭3件だけを照合する安全テスト。
- * 本番データを削除せず、出力列を追加して結果を書き込む。
- */
-function runPlacesTest3() {
-  return withPlacesExecutionLock_('先頭3件テスト', function() {
+function runHotelDbV2Test3() {
+  return withHotelDbV2Lock_('Ver2.0 先頭3件テスト', function() {
     const ui = SpreadsheetApp.getUi();
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-
     const response = ui.alert(
-      '先頭3件だけテスト',
-      '現在のシート「' + sheet.getName() + '」の2～4行目を照合します。\n' +
-      'Google情報の出力列が不足している場合は右端へ追加します。続行しますか？',
+      'Ver2.0 先頭3件テスト',
+      '現在のシート「' + sheet.getName() + '」の2～4行目を処理します。\n\n' +
+      '元の郵便番号・住所・施設名は自動変更しません。\n' +
+      '差分は「修正候補」、閉業や低一致は「要確認」へ出力します。続行しますか？',
       ui.ButtonSet.YES_NO
     );
 
-    if (response !== ui.Button.YES) {
-      return { cancelled: true };
-    }
+    if (response !== ui.Button.YES) return { cancelled: true };
 
-    addPlacesOutputHeaders();
-    const summary = enrichSheetWithPlaces(sheet, {
-      startRow: 2,
-      maxRows: APP_RUNNER.TEST_ROWS,
-      skipExisting: false
-    });
-
-    showPlacesSummary_('先頭3件テスト完了', summary);
+    const summary = HOTEL_DB_V2.test3();
+    showHotelDbV2Summary_('Ver2.0 先頭3件テスト完了', summary);
     return summary;
   });
 }
 
-/**
- * アクティブシートを最大100件ずつ照合する通常実行。
- * Place IDが保存済みの行は検索を省略する。
- */
-function runPlacesOnly() {
-  return withPlacesExecutionLock_('Places照合', function() {
+function runHotelDbV2Batch() {
+  return withHotelDbV2Lock_('Ver2.0 本番バッチ', function() {
     const ui = SpreadsheetApp.getUi();
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-
+    const diagnosis = HOTEL_DB_V2.diagnose();
     const response = ui.alert(
-      'Places照合を実行',
-      '現在のシート「' + sheet.getName() + '」を最大' +
-      APP_RUNNER.DEFAULT_BATCH_SIZE + '件処理します。\n' +
-      'Place ID保存済みの行はスキップします。続行しますか？',
+      'Ver2.0 本番バッチ実行',
+      '対象シート: 「' + sheet.getName() + '」\n' +
+      '開始行: ' + (diagnosis.checkpoint || 2) + '\n' +
+      '最大処理件数: 50件\n\n' +
+      '元データは自動修正・自動削除しません。続行しますか？',
       ui.ButtonSet.YES_NO
     );
 
-    if (response !== ui.Button.YES) {
-      return { cancelled: true };
-    }
+    if (response !== ui.Button.YES) return { cancelled: true };
 
-    addPlacesOutputHeaders();
-    const summary = enrichSheetWithPlaces(sheet, {
-      startRow: 2,
-      maxRows: APP_RUNNER.DEFAULT_BATCH_SIZE,
-      skipExisting: true
-    });
-
-    showPlacesSummary_('Places照合完了', summary);
+    const summary = HOTEL_DB_V2.runBatch();
+    showHotelDbV2Summary_('Ver2.0 本番バッチ完了', summary);
     return summary;
   });
 }
 
-/**
- * 保存済みPlace IDを使って、営業状態や住所などを再取得する。
- */
-function runRefreshExistingPlaces() {
-  return withPlacesExecutionLock_('Place ID再確認', function() {
-    const result = refreshExistingPlaceDetails();
+function runHotelDbV2RefreshExisting() {
+  return withHotelDbV2Lock_('保存済みPlace ID再確認', function() {
+    const ui = SpreadsheetApp.getUi();
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const response = ui.alert(
+      '保存済みPlace IDを再確認',
+      '現在のシート「' + sheet.getName() + '」で、Place IDが保存済みの行だけを' +
+      '最大50件再確認します。続行しますか？',
+      ui.ButtonSet.YES_NO
+    );
+
+    if (response !== ui.Button.YES) return { cancelled: true };
+
+    const summary = HOTEL_DB_V2.refreshExisting();
+    showHotelDbV2Summary_('Place ID再確認完了', summary);
+    return summary;
+  });
+}
+
+function runHotelDbV2ResetCheckpoint() {
+  const result = HOTEL_DB_V2.resetCheckpoint();
+  SpreadsheetApp.getUi().alert(
+    '開始行をリセットしました。\n\n対象シート: ' + result.sheet + '\n次回は2行目から処理します。'
+  );
+  return result;
+}
+
+function runHotelDbV2Duplicates() {
+  return withHotelDbV2Lock_('重複候補更新', function() {
+    const result = HOTEL_DB_V2.refreshDuplicates();
     SpreadsheetApp.getUi().alert(
-      'Place ID再確認完了\n\n更新件数: ' + Number(result.updated || 0) + '件'
+      '重複候補を更新しました。\n\n候補数: ' + result.candidates + '件\n' +
+      '自動削除はしていません。「重複候補」シートで確認してください。'
     );
     return result;
   });
 }
 
-/**
- * 施設名＋住所の完全重複候補を実行ログとダイアログへ表示する。
- */
-function runDuplicateCheck() {
-  const duplicates = findDuplicateFacilities();
-  const preview = duplicates.slice(0, 10).map(function(item) {
-    return '行' + item.firstRow + ' と 行' + item.duplicateRow;
+function runHotelDbV2ApplyApprovedCorrections() {
+  return withHotelDbV2Lock_('承認済み修正反映', function() {
+    const ui = SpreadsheetApp.getUi();
+    const response = ui.alert(
+      '承認済み修正候補を反映',
+      '「修正候補」シートの状態が「承認」の行だけ、元シートへ反映します。\n\n' +
+      '元データが候補作成後に変更されている場合は反映せず「要再確認」にします。\n' +
+      '続行しますか？',
+      ui.ButtonSet.YES_NO
+    );
+
+    if (response !== ui.Button.YES) return { cancelled: true };
+
+    const result = HOTEL_DB_V2.applyApprovedCorrections();
+    ui.alert([
+      '承認済み修正の反映完了',
+      '',
+      '承認対象: ' + result.approved,
+      '反映済み: ' + result.applied,
+      '要再確認: ' + result.conflicts,
+      'エラー: ' + result.errors
+    ].join('\n'));
+    return result;
   });
-
-  const lines = [
-    '重複候補確認',
-    '',
-    '候補数: ' + duplicates.length + '件'
-  ];
-
-  if (preview.length) {
-    lines.push('', '先頭10件:', preview.join('\n'));
-  }
-
-  SpreadsheetApp.getUi().alert(lines.join('\n'));
-  return duplicates;
 }
 
-/**
- * 同時実行を防ぎ、例外を利用者向けダイアログに変換する。
- */
-function withPlacesExecutionLock_(label, callback) {
-  const lock = LockService.getDocumentLock();
-  if (!lock.tryLock(APP_RUNNER.LOCK_TIMEOUT_MS)) {
+function withHotelDbV2Lock_(label, callback) {
+  const lock = LockService.getDocumentLock() || LockService.getScriptLock();
+  if (!lock.tryLock(HOTEL_DB_V2_RUNNER.LOCK_TIMEOUT_MS)) {
     throw new Error('別の処理が実行中です。完了後にもう一度実行してください。');
   }
 
   try {
     return callback();
   } catch (error) {
-    console.error(label + ': ' + error.stack);
+    console.error(label + ': ' + (error.stack || error.message));
     SpreadsheetApp.getUi().alert(
       label + 'でエラーが発生しました。\n\n' + error.message
     );
@@ -204,29 +185,27 @@ function withPlacesExecutionLock_(label, callback) {
   }
 }
 
-/**
- * 一括処理結果を読みやすい形で表示する。
- */
-function showPlacesSummary_(title, summary) {
-  const errors = summary.errors || [];
+function showHotelDbV2Summary_(title, summary) {
   const lines = [
     title,
     '',
     '処理件数: ' + Number(summary.processed || 0),
-    '更新件数: ' + Number(summary.updated || 0),
+    '営業中: ' + Number(summary.operational || 0),
+    '修正候補: ' + Number(summary.corrections || 0),
+    '要確認: ' + Number(summary.needReview || 0),
+    '候補なし: ' + Number(summary.notFound || 0),
+    '閉業: ' + Number(summary.closed || 0),
+    '一時休業: ' + Number(summary.temporaryClosed || 0),
+    '開業予定: ' + Number(summary.futureOpening || 0),
     'スキップ: ' + Number(summary.skipped || 0),
-    'エラー: ' + errors.length
+    'エラー: ' + Number(summary.errors || 0),
+    '集計整合: ' + (summary.reconciliation || '未確認')
   ];
 
   if (summary.nextStartRow) {
-    lines.push('次回開始行: ' + summary.nextStartRow);
-  }
-
-  if (errors.length) {
-    const preview = errors.slice(0, 5).map(function(item) {
-      return '行' + item.row + ': ' + item.message;
-    });
-    lines.push('', '先頭5件のエラー:', preview.join('\n'));
+    lines.push('', '次回開始行: ' + summary.nextStartRow);
+  } else {
+    lines.push('', 'このシートの対象範囲は完了しました。');
   }
 
   SpreadsheetApp.getUi().alert(lines.join('\n'));
