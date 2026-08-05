@@ -221,7 +221,10 @@ function hotelDbV2GetPlaceDetails_(placeId) {
   const id = hotelDbV2Clean_(placeId);
   if (!id) return null;
 
-  return hotelDbV2CallPlacesApi_('/places/' + encodeURIComponent(id), {
+  return hotelDbV2CallPlacesApi_(
+    '/places/' + encodeURIComponent(id) +
+    '?languageCode=' + encodeURIComponent(HOTEL_DB_V2_CONFIG.LANGUAGE_CODE) +
+    '&regionCode=' + encodeURIComponent(HOTEL_DB_V2_CONFIG.REGION_CODE), {
     method: 'get',
     fieldMask: HOTEL_DB_V2_CONFIG.DETAILS_FIELDS
   });
@@ -509,4 +512,3 @@ function hotelDbV2Today_() {
 function hotelDbV2Timestamp_() {
   return Utilities.formatDate(new Date(), HOTEL_DB_V2_CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
 }
-
