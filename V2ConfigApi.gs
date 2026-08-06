@@ -92,6 +92,23 @@ const HOTEL_DB_V2_CONFIG = Object.freeze({
   ].join(',')
 });
 
+const HOTEL_DB_V2_FACILITY_TYPES = Object.freeze([
+  'ゲストハウス',
+  'ビジネスホテル',
+  'カプセルホテル',
+  'リゾートホテル',
+  '温泉旅館',
+  '旅館',
+  'ホテル',
+  '民宿',
+  'ホステル',
+  'ペンション',
+  'ロッジ',
+  'お宿',
+  '宿',
+  'イン'
+]);
+
 const HOTEL_DB_V2_CORRECTION_HEADERS = [
   '候補キー', '状態', '元シート', '元シートID', '元行',
   '元郵便番号', '修正郵便番号',
@@ -127,7 +144,6 @@ const HOTEL_DB_V2_SUMMARY_HEADERS = [
   '閉業', '一時休業', '開業予定', 'エラー', 'スキップ',
   '次回開始行', '整合確認'
 ];
-
 
 function hotelDbV2GetApiKey_() {
   const value = PropertiesService.getScriptProperties()
@@ -186,7 +202,9 @@ function hotelDbV2CallPlacesApi_(path, options) {
         'Places API (New) エラー: HTTP=' + code + ', message=' + message
       );
 
-      if (!retryable || attempt === HOTEL_DB_V2_CONFIG.MAX_RETRIES) throw lastError;
+      if (!retryable || attempt === HOTEL_DB_V2_CONFIG.MAX_RETRIES) {
+        throw lastError;
+      }
     } catch (error) {
       lastError = error;
       if (attempt === HOTEL_DB_V2_CONFIG.MAX_RETRIES) throw error;
@@ -225,9 +243,10 @@ function hotelDbV2GetPlaceDetails_(placeId) {
     '/places/' + encodeURIComponent(id) +
     '?languageCode=' + encodeURIComponent(HOTEL_DB_V2_CONFIG.LANGUAGE_CODE) +
     '&regionCode=' + encodeURIComponent(HOTEL_DB_V2_CONFIG.REGION_CODE), {
-    method: 'get',
-    fieldMask: HOTEL_DB_V2_CONFIG.DETAILS_FIELDS
-  });
+      method: 'get',
+      fieldMask: HOTEL_DB_V2_CONFIG.DETAILS_FIELDS
+    }
+  );
 }
 
 function hotelDbV2Clean_(value) {
@@ -238,23 +257,75 @@ function hotelDbV2NormalizeText_(value) {
   return hotelDbV2Clean_(value)
     .normalize('NFKC')
     .toLowerCase()
-    .replace(/[\s　・･,，.．'’"“”\-ー―‐_/\\()（）\[\]【】]/g, '');
+    .replace(/[\s　・･,，.．'’"“”\-ー―‐_/\\()（）[\]【】]/g, '');
+}
+
+function hotelDbV2KanjiNumberToInt_(value) {
+  const text = hotelDbV2Clean_(value);
+  if (!text) return '';
+
+  const digits = {
+    '〇': 0, '零': 0, '一': 1, '二': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9
+  };
+  const units = { '十': 10, '百': 100, '千': 1000 };
+
+  if (!/[十百千]/.test(text)) {
+    return text.split('').map(function(character) {
+      return digits[character] === undefined ? character : digits[character];
+    }).join('');
+  }
+
+  let total = 0;
+  let current = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    const character = text.charAt(i);
+    if (digits[character] !== undefined) {
+      current = digits[character];
+      continue;
+    }
+
+    const unit = units[character];
+    if (unit) {
+      total += (current || 1) * unit;
+      current = 0;
+    }
+  }
+
+  return String(total + current);
+}
+
+function hotelDbV2ConvertAddressKanjiNumbers_(value) {
+  return hotelDbV2Clean_(value).replace(
+    /([〇零一二三四五六七八九十百千]+)(?=丁目|番地?|番|号|階)/g,
+    function(match) {
+      return hotelDbV2KanjiNumberToInt_(match);
+    }
+  );
 }
 
 function hotelDbV2NormalizeAddress_(value) {
-  return hotelDbV2Clean_(value)
-    .normalize('NFKC')
+  return hotelDbV2ConvertAddressKanjiNumbers_(
+    hotelDbV2Clean_(value).normalize('NFKC')
+  )
+    .toLowerCase()
     .replace(/^日本[、,\s]*/u, '')
-    .replace(/^Japan[、,\s]*/i, '')
+    .replace(/^japan[、,\s]*/i, '')
     .replace(/〒\s*\d{3}-?\d{4}\s*/u, '')
     .replace(/[‐‑‒–—―ー−]/g, '-')
     .replace(/丁目/g, '-')
     .replace(/番地の?/g, '-')
     .replace(/番/g, '-')
     .replace(/号/g, '')
+    .replace(/[、,，.．・･]/g, '')
     .replace(/\s+/g, '')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+function hotelDbV2NormalizeAddressForComparison_(value) {
+  return hotelDbV2NormalizeAddress_(value);
 }
 
 function hotelDbV2NormalizePostalCode_(value) {
@@ -311,6 +382,166 @@ function hotelDbV2ContainsJapanese_(value) {
   return /[\u3040-\u30ff\u3400-\u9fff]/.test(hotelDbV2Clean_(value));
 }
 
+function hotelDbV2GetFacilityNameTokens_(sourceName, googleName) {
+  const typeTokens = HOTEL_DB_V2_FACILITY_TYPES
+    .map(hotelDbV2NormalizeText_)
+    .filter(Boolean);
+  const tokens = [];
+
+  [sourceName, googleName].forEach(function(name) {
+    const normalized = hotelDbV2NormalizeText_(name);
+    if (!normalized) return;
+
+    tokens.push(normalized);
+
+    let base = normalized;
+    typeTokens.forEach(function(typeToken) {
+      base = base.split(typeToken).join('');
+    });
+    if (base) tokens.push(base);
+  });
+
+  return hotelDbV2Unique_(tokens.concat(typeTokens))
+    .sort(function(a, b) {
+      return b.length - a.length;
+    });
+}
+
+function hotelDbV2AddressesEquivalent_(
+  sourceAddress,
+  proposedAddress,
+  sourceName,
+  googleName
+) {
+  const source = hotelDbV2NormalizeAddressForComparison_(sourceAddress);
+  const proposed = hotelDbV2NormalizeAddressForComparison_(proposedAddress);
+
+  if (!source || !proposed) return false;
+  if (source === proposed) return true;
+
+  if (proposed.indexOf(source) !== 0) return false;
+
+  let remainder = proposed.slice(source.length);
+  const tokens = hotelDbV2GetFacilityNameTokens_(sourceName, googleName);
+  let removedFacilityNoise = false;
+
+  tokens.forEach(function(token) {
+    if (!token) return;
+
+    while (remainder.indexOf(token) !== -1) {
+      remainder = remainder.split(token).join('');
+      removedFacilityNoise = true;
+    }
+  });
+
+  if (!remainder) return removedFacilityNoise;
+
+  const nonNumeric = remainder.replace(/\d+/g, '').replace(/-/g, '');
+  if (nonNumeric || !removedFacilityNoise) return false;
+
+  const sourceNumbers = source.match(/\d+/g) || [];
+  const remainingNumbers = remainder.match(/\d+/g) || [];
+
+  return remainingNumbers.length > 0 && remainingNumbers.every(function(number) {
+    return sourceNumbers.indexOf(number) !== -1;
+  });
+}
+
+function hotelDbV2EscapeRegExp_(value) {
+  return hotelDbV2Clean_(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hotelDbV2FlexibleSuffixPattern_(value) {
+  const normalized = hotelDbV2Clean_(value).normalize('NFKC');
+  if (!normalized) return '';
+
+  return normalized.split('').map(function(character) {
+    return hotelDbV2EscapeRegExp_(character);
+  }).join('[\\s　]*');
+}
+
+function hotelDbV2StripTrailingFacilityLabels_(address, sourceName, googleName) {
+  let text = hotelDbV2Clean_(address).normalize('NFKC');
+  const names = hotelDbV2Unique_([sourceName, googleName])
+    .filter(Boolean)
+    .sort(function(a, b) {
+      return String(b).length - String(a).length;
+    });
+
+  let changed = true;
+  while (changed && text) {
+    changed = false;
+
+    for (let i = 0; i < names.length; i++) {
+      const pattern = hotelDbV2FlexibleSuffixPattern_(names[i]);
+      if (!pattern) continue;
+
+      const next = text.replace(
+        new RegExp('[\\s　]*' + pattern + '[\\s　]*$', 'iu'),
+        ''
+      ).trim();
+
+      if (next !== text) {
+        text = next;
+        changed = true;
+        break;
+      }
+    }
+
+    if (changed) continue;
+
+    for (let j = 0; j < HOTEL_DB_V2_FACILITY_TYPES.length; j++) {
+      const typePattern = hotelDbV2FlexibleSuffixPattern_(
+        HOTEL_DB_V2_FACILITY_TYPES[j]
+      );
+      const next = text.replace(
+        new RegExp('[\\s　]*' + typePattern + '[\\s　]*$', 'iu'),
+        ''
+      ).trim();
+
+      if (next !== text) {
+        text = next;
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return text;
+}
+
+function hotelDbV2CleanAddressForSource_(
+  candidateAddress,
+  sourceAddress,
+  sourceName,
+  googleName
+) {
+  const candidate = hotelDbV2Clean_(candidateAddress)
+    .replace(/^日本[、,\s]*/u, '')
+    .replace(/^Japan[、,\s]*/i, '')
+    .replace(/〒\s*\d{3}-?\d{4}\s*/u, '')
+    .replace(/^[、,\s]+/, '')
+    .trim();
+
+  if (
+    sourceAddress &&
+    hotelDbV2AddressesEquivalent_(
+      sourceAddress,
+      candidate,
+      sourceName,
+      googleName
+    )
+  ) {
+    return hotelDbV2Clean_(sourceAddress);
+  }
+
+  return hotelDbV2StripTrailingFacilityLabels_(
+    candidate,
+    sourceName,
+    googleName
+  );
+}
+
 function hotelDbV2GetComponent_(place, type) {
   const components = place && place.addressComponents
     ? place.addressComponents
@@ -325,7 +556,9 @@ function hotelDbV2GetComponent_(place, type) {
 }
 
 function hotelDbV2GetPostalCode_(place) {
-  return hotelDbV2NormalizePostalCode_(hotelDbV2GetComponent_(place, 'postal_code'));
+  return hotelDbV2NormalizePostalCode_(
+    hotelDbV2GetComponent_(place, 'postal_code')
+  );
 }
 
 function hotelDbV2GetPrefecture_(place) {
@@ -394,27 +627,41 @@ function hotelDbV2GetJapaneseFullAddress_(place) {
   return rebuilt || formatted;
 }
 
-function hotelDbV2GetAddressForSource_(place, sourceMunicipality) {
+function hotelDbV2GetAddressForSource_(place, facilityOrMunicipality) {
+  const facility = facilityOrMunicipality &&
+    typeof facilityOrMunicipality === 'object'
+    ? facilityOrMunicipality
+    : { municipality: facilityOrMunicipality };
+
   const fullAddress = hotelDbV2GetJapaneseFullAddress_(place);
   const prefecture = hotelDbV2GetPrefecture_(place);
   const municipality = hotelDbV2GetMunicipalityBase_(place);
-  const source = hotelDbV2Clean_(sourceMunicipality);
+  const sourceMunicipality = hotelDbV2Clean_(facility.municipality);
 
   let result = hotelDbV2Clean_(fullAddress)
     .replace(/^日本[、,\s]*/u, '')
     .replace(/^Japan[、,\s]*/i, '')
     .replace(/〒\s*\d{3}-?\d{4}\s*/u, '');
 
-  [prefecture, municipality, source].forEach(function(prefix) {
+  [prefecture, municipality, sourceMunicipality].forEach(function(prefix) {
     const text = hotelDbV2Clean_(prefix);
     if (text && result.indexOf(text) === 0) result = result.slice(text.length);
   });
 
-  return result.replace(/^[、,\s]+/, '').trim() || fullAddress;
+  result = result.replace(/^[、,\s]+/, '').trim() || fullAddress;
+
+  return hotelDbV2CleanAddressForSource_(
+    result,
+    facility.address,
+    facility.name,
+    hotelDbV2GetDisplayName_(place)
+  );
 }
 
 function hotelDbV2GetDisplayName_(place) {
-  return place && place.displayName ? hotelDbV2Clean_(place.displayName.text) : '';
+  return place && place.displayName
+    ? hotelDbV2Clean_(place.displayName.text)
+    : '';
 }
 
 function hotelDbV2TranslateBusinessStatus_(status) {
@@ -438,41 +685,75 @@ function hotelDbV2BuildSearchQuery_(facility) {
 }
 
 function hotelDbV2CalculateMatchScore_(facility, place) {
+  const googleDisplayName = hotelDbV2GetDisplayName_(place);
   const sourceName = hotelDbV2NormalizeText_(facility.name);
-  const googleName = hotelDbV2NormalizeText_(hotelDbV2GetDisplayName_(place));
-  const sourceAddress = hotelDbV2NormalizeAddress_(
-    hotelDbV2Clean_(facility.municipality) + hotelDbV2Clean_(facility.address)
+  const googleName = hotelDbV2NormalizeText_(googleDisplayName);
+  const sourceAddressText = hotelDbV2Clean_(facility.address);
+  const googleAddressText = hotelDbV2GetAddressForSource_(place, facility);
+  const sourceAddress = hotelDbV2NormalizeAddressForComparison_(
+    sourceAddressText
   );
-  const googleAddress = hotelDbV2NormalizeAddress_(hotelDbV2GetJapaneseFullAddress_(place));
+  const googleAddress = hotelDbV2NormalizeAddressForComparison_(
+    googleAddressText
+  );
   const sourcePostal = hotelDbV2NormalizePostalCode_(facility.postalCode);
   const googlePostal = hotelDbV2GetPostalCode_(place);
   const sourceMunicipality = hotelDbV2NormalizeText_(facility.municipality);
-  const googleMunicipality = hotelDbV2NormalizeText_(hotelDbV2GetMunicipalityForSource_(place, facility.municipality));
+  const googleMunicipality = hotelDbV2NormalizeText_(
+    hotelDbV2GetMunicipalityForSource_(place, facility.municipality)
+  );
 
   let score = 0;
 
   if (sourceName && googleName) {
-    if (sourceName === googleName) score += 50;
-    else if (sourceName.indexOf(googleName) !== -1 || googleName.indexOf(sourceName) !== -1) {
+    if (sourceName === googleName) {
+      score += 50;
+    } else if (
+      sourceName.indexOf(googleName) !== -1 ||
+      googleName.indexOf(sourceName) !== -1
+    ) {
       score += 40;
     } else {
-      score += Math.round(hotelDbV2SimilarityRatio_(sourceName, googleName) * 34);
+      score += Math.round(
+        hotelDbV2SimilarityRatio_(sourceName, googleName) * 34
+      );
     }
   }
 
   if (sourceAddress && googleAddress) {
-    if (sourceAddress === googleAddress) score += 35;
-    else if (sourceAddress.indexOf(googleAddress) !== -1 || googleAddress.indexOf(sourceAddress) !== -1) {
+    if (
+      hotelDbV2AddressesEquivalent_(
+        sourceAddressText,
+        googleAddressText,
+        facility.name,
+        googleDisplayName
+      )
+    ) {
+      score += 35;
+    } else if (
+      sourceAddress.indexOf(googleAddress) !== -1 ||
+      googleAddress.indexOf(sourceAddress) !== -1
+    ) {
       score += 30;
     } else {
-      score += Math.round(hotelDbV2SimilarityRatio_(sourceAddress, googleAddress) * 26);
+      score += Math.round(
+        hotelDbV2SimilarityRatio_(sourceAddress, googleAddress) * 26
+      );
     }
   }
 
-  if (sourcePostal && googlePostal && sourcePostal === googlePostal) score += 10;
-  if (sourceMunicipality && googleMunicipality &&
-      (sourceMunicipality.indexOf(googleMunicipality) !== -1 ||
-       googleMunicipality.indexOf(sourceMunicipality) !== -1)) {
+  if (sourcePostal && googlePostal && sourcePostal === googlePostal) {
+    score += 10;
+  }
+
+  if (
+    sourceMunicipality &&
+    googleMunicipality &&
+    (
+      sourceMunicipality.indexOf(googleMunicipality) !== -1 ||
+      googleMunicipality.indexOf(sourceMunicipality) !== -1
+    )
+  ) {
     score += 5;
   }
 
@@ -483,7 +764,9 @@ function hotelDbV2CalculateMatchScore_(facility, place) {
 }
 
 function hotelDbV2FindBestCandidate_(facility) {
-  const results = hotelDbV2SearchPlaces_(hotelDbV2BuildSearchQuery_(facility));
+  const results = hotelDbV2SearchPlaces_(
+    hotelDbV2BuildSearchQuery_(facility)
+  );
   if (!results.length) return null;
 
   const ranked = results.map(function(place) {
@@ -506,9 +789,17 @@ function hotelDbV2FindBestCandidate_(facility) {
 }
 
 function hotelDbV2Today_() {
-  return Utilities.formatDate(new Date(), HOTEL_DB_V2_CONFIG.TIMEZONE, 'yyyy-MM-dd');
+  return Utilities.formatDate(
+    new Date(),
+    HOTEL_DB_V2_CONFIG.TIMEZONE,
+    'yyyy-MM-dd'
+  );
 }
 
 function hotelDbV2Timestamp_() {
-  return Utilities.formatDate(new Date(), HOTEL_DB_V2_CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+  return Utilities.formatDate(
+    new Date(),
+    HOTEL_DB_V2_CONFIG.TIMEZONE,
+    'yyyy-MM-dd HH:mm:ss'
+  );
 }
