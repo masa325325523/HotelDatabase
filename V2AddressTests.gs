@@ -57,6 +57,15 @@ function runHotelDbV2AddressNormalizationTests() {
       googleName: 'とらや旅館',
       equivalent: true,
       cleanedAddress: '戎町455'
+    },
+    {
+      name: '施設名を伴わない同番号の追加は住所差分にする',
+      sourceAddress: '本町2',
+      googleAddress: '本町2-2',
+      sourceName: 'テスト旅館',
+      googleName: 'テスト旅館',
+      equivalent: false,
+      cleanedAddress: '本町2-2'
     }
   ];
 
