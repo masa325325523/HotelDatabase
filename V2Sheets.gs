@@ -406,6 +406,31 @@ function hotelDbV2CompareFacility_(facility, googleData) {
     differences.push('施設名');
   }
 
+  if (
+    typeof hotelDbV2CountyMunicipalityDecision_ === 'function' &&
+    differences.length === 2 &&
+    differences.indexOf('市区町村') !== -1 &&
+    differences.indexOf('住所') !== -1
+  ) {
+    const countyDecision = hotelDbV2CountyMunicipalityDecision_({
+      state: '未確認',
+      sourcePostalCode: facility.postalCode,
+      proposedPostalCode: googleData.proposedPostalCode,
+      sourceMunicipality: facility.municipality,
+      proposedMunicipality: googleData.proposedMunicipality,
+      sourceAddress: facility.address,
+      proposedAddress: googleData.proposedAddress,
+      sourceName: facility.name,
+      proposedName: googleData.proposedName,
+      placeId: googleData.placeId,
+      matchScore: googleData.matchScore,
+      businessStatus: googleData.businessStatus,
+      differences: differences.join('・')
+    });
+
+    if (countyDecision.equivalent) return [];
+  }
+
   return differences;
 }
 
