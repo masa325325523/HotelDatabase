@@ -329,7 +329,9 @@ function hotelDbV2NormalizeAddressForComparison_(value) {
 }
 
 function hotelDbV2NormalizePostalCode_(value) {
-  const digits = hotelDbV2Clean_(value).replace(/\D/g, '');
+  const digits = hotelDbV2Clean_(value)
+    .normalize('NFKC')
+    .replace(/\D/g, '');
   return digits.length === 7
     ? digits.slice(0, 3) + '-' + digits.slice(3)
     : '';
