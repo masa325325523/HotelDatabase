@@ -15,6 +15,12 @@ const HOTEL_DB_V2_TRIAGE_GENERIC_NAME_WORDS = Object.freeze([
   'ロッジ', 'イン', 'お宿', '宿'
 ]);
 
+const HOTEL_DB_V2_TRIAGE_RULES = Object.freeze({
+  NAME_NOISE_MIN_SCORE: 90,
+  ADDRESS_ONLY_MIN_SCORE: 80,
+  POSTAL_ONLY_MIN_SCORE: 95
+});
+
 function runHotelDbV2TriageCorrections() {
   return withHotelDbV2Lock_('修正候補自動仕分け', function() {
     const ui = SpreadsheetApp.getUi();
@@ -209,14 +215,6 @@ function hotelDbV2ClassifyCorrectionCandidate_(input) {
     );
   }
 
-  if (!score || score < 90) {
-    return hotelDbV2TriageDecision_(
-      '要人確認',
-      '一致スコアが90点未満のため、人が確認します。',
-      Math.max(60, Math.min(89, Math.round(score || 60)))
-    );
-  }
-
   if (!differences.length) {
     return hotelDbV2TriageDecision_(
       '対象外',
@@ -251,6 +249,10 @@ function hotelDbV2ClassifyCorrectionCandidate_(input) {
     hotelDbV2NormalizeText_(data.proposedName);
 
   if (difference === '施設名') {
+    if (score < HOTEL_DB_V2_TRIAGE_RULES.NAME_NOISE_MIN_SCORE) {
+      return hotelDbV2TriageLowScoreDecision_(score, 90);
+    }
+
     if (
       postalSame &&
       municipalitySame &&
@@ -271,7 +273,7 @@ function hotelDbV2ClassifyCorrectionCandidate_(input) {
     return hotelDbV2TriageDecision_(
       '要人確認',
       '施設名差分が単純な付加表記だけとは断定できません。',
-      90
+      Math.max(90, Math.round(score))
     );
   }
 
@@ -289,23 +291,37 @@ function hotelDbV2ClassifyCorrectionCandidate_(input) {
       );
     }
 
-    if (postalSame && municipalitySame && nameSame) {
+    if (
+      postalSame &&
+      municipalitySame &&
+      nameSame &&
+      score >= HOTEL_DB_V2_TRIAGE_RULES.ADDRESS_ONLY_MIN_SCORE
+    ) {
       return hotelDbV2TriageDecision_(
         '承認候補',
-        '施設名・郵便番号・市区町村が一致し、差分が住所だけです。元データ更新候補として優先確認します。',
-        Math.min(96, Math.max(90, Math.round(score)))
+        '施設名・郵便番号・市区町村が一致し、差分が住所だけです。スコア80点以上かつ部屋・階・建物差の危険表記がないため、元データ更新候補として優先確認します。',
+        Math.min(96, Math.max(80, Math.round(score)))
       );
+    }
+
+    if (score < HOTEL_DB_V2_TRIAGE_RULES.ADDRESS_ONLY_MIN_SCORE) {
+      return hotelDbV2TriageLowScoreDecision_(score, 80);
     }
 
     return hotelDbV2TriageDecision_(
       '要人確認',
-      '住所以外の一致条件が不足しているため自動承認候補にしません。',
-      92
+      '住所以外の一致条件が不足しているため承認候補にしません。',
+      Math.max(80, Math.round(score))
     );
   }
 
   if (difference === '郵便番号') {
-    if (municipalitySame && addressSame && nameSame && score >= 95) {
+    if (
+      municipalitySame &&
+      addressSame &&
+      nameSame &&
+      score >= HOTEL_DB_V2_TRIAGE_RULES.POSTAL_ONLY_MIN_SCORE
+    ) {
       return hotelDbV2TriageDecision_(
         '承認候補',
         '施設名・市区町村・住所が一致し、差分が郵便番号だけです。',
@@ -313,9 +329,13 @@ function hotelDbV2ClassifyCorrectionCandidate_(input) {
       );
     }
 
+    if (score < HOTEL_DB_V2_TRIAGE_RULES.POSTAL_ONLY_MIN_SCORE) {
+      return hotelDbV2TriageLowScoreDecision_(score, 95);
+    }
+
     return hotelDbV2TriageDecision_(
       '要人確認',
-      '郵便番号差分は誤修正防止のため人が確認します。',
+      '郵便番号差分は一致条件が不足しているため人が確認します。',
       92
     );
   }
@@ -323,7 +343,15 @@ function hotelDbV2ClassifyCorrectionCandidate_(input) {
   return hotelDbV2TriageDecision_(
     '要人確認',
     '市区町村など重要項目の差分は人が確認します。',
-    95
+    Math.max(80, Math.round(score || 80))
+  );
+}
+
+function hotelDbV2TriageLowScoreDecision_(score, threshold) {
+  return hotelDbV2TriageDecision_(
+    '要人確認',
+    '一致スコアが' + threshold + '点未満のため、人が確認します。',
+    Math.max(60, Math.min(threshold - 1, Math.round(score || 60)))
   );
 }
 
@@ -467,18 +495,36 @@ function runHotelDbV2CorrectionTriageTests() {
       expected: '却下候補'
     },
     {
-      name: '高スコア・名称一致・住所だけ差分なら承認候補',
+      name: '91点・名称一致・住所だけ差分なら承認候補',
       input: Object.assign({}, base),
       expected: '承認候補'
     },
     {
-      name: '90点未満は要人確認',
+      name: '84点・名称一致・住所だけ差分なら承認候補',
       input: Object.assign({}, base, {
         sourceAddress: '吉岡温泉町268',
         proposedAddress: '吉岡温泉町772',
         sourceName: 'たから屋旅館',
         proposedName: 'たから屋旅館',
         matchScore: 84
+      }),
+      expected: '承認候補'
+    },
+    {
+      name: '88点・名称一致・住所だけ差分なら承認候補',
+      input: Object.assign({}, base, {
+        sourceAddress: '吉岡温泉町270',
+        proposedAddress: '吉岡温泉町238',
+        sourceName: '福田屋旅館',
+        proposedName: '福田屋旅館',
+        matchScore: 88
+      }),
+      expected: '承認候補'
+    },
+    {
+      name: '79点の住所差は要人確認',
+      input: Object.assign({}, base, {
+        matchScore: 79
       }),
       expected: '要人確認'
     },
