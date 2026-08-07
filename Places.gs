@@ -1,25 +1,15 @@
 /**
- * Places.gs 完全統合版 Part1〜4
- * 全国宿泊施設データベース向け Google Places API 連携
+ * Places.gs
+ * Places API (New) integration for HotelDatabase.
  *
- * Part1: 設定・API呼び出し・共通関数
- * Part2: 施設検索・候補比較・Place ID取得
- * Part3: 詳細取得・住所／郵便番号正規化・営業状態判定
- * Part4: Google Sheets一括更新・重複チェック・備考生成
- *
- * Script Properties 推奨設定:
- *   GOOGLE_PLACES_API_KEY = Google Places APIキー
- *
- * 対応する主な見出し:
- *   郵便番号 / 市区町村名 / 住所（番地まで） / 施設名 / 宿泊分類 / 備考
- *   Place ID / Google施設名 / Google住所 / 電話番号 / 公式サイト
- *   評価 / 口コミ数 / 営業状態 / 緯度 / 経度 / 最終確認日
+ * Script property:
+ *   GOOGLE_PLACES_API_KEY
  */
 
 const PLACES = Object.freeze({
-  API_BASE: 'https://maps.googleapis.com/maps/api/place',
+  API_BASE: 'https://places.googleapis.com/v1',
   LANGUAGE: 'ja',
-  REGION: 'jp',
+  REGION: 'JP',
   TIMEZONE: 'Asia/Tokyo',
   REQUEST_INTERVAL_MS: 150,
   MAX_RETRIES: 3,
@@ -27,21 +17,32 @@ const PLACES = Object.freeze({
   MIN_MATCH_SCORE: 55,
   AUTO_ACCEPT_SCORE: 72,
   DEFAULT_BATCH_SIZE: 100,
+  SEARCH_FIELDS: [
+    'places.id',
+    'places.displayName',
+    'places.formattedAddress',
+    'places.businessStatus',
+    'places.rating',
+    'places.userRatingCount',
+    'places.location',
+    'places.types',
+    'places.googleMapsUri'
+  ].join(','),
   DETAILS_FIELDS: [
-    'place_id',
-    'name',
-    'formatted_address',
-    'address_component',
-    'formatted_phone_number',
-    'international_phone_number',
-    'website',
-    'url',
-    'business_status',
+    'id',
+    'displayName',
+    'formattedAddress',
+    'addressComponents',
+    'nationalPhoneNumber',
+    'internationalPhoneNumber',
+    'websiteUri',
+    'googleMapsUri',
+    'businessStatus',
     'rating',
-    'user_ratings_total',
-    'geometry',
+    'userRatingCount',
+    'location',
     'types',
-    'opening_hours'
+    'regularOpeningHours'
   ].join(','),
   HEADERS: Object.freeze({
     postalCode: ['郵便番号', '〒', 'postal_code'],
@@ -65,17 +66,11 @@ const PLACES = Object.freeze({
   })
 });
 
-/* =====================================================
- * Part1: 設定・API呼び出し・共通関数
- * ===================================================== */
-
 function getPlacesApiKey() {
   const scriptKey = PropertiesService.getScriptProperties()
     .getProperty('GOOGLE_PLACES_API_KEY');
-
   if (scriptKey) return String(scriptKey).trim();
 
-  // 既存プロジェクトに getConfig() がある場合は互換利用する。
   if (typeof getConfig === 'function') {
     const candidates = ['GOOGLE_PLACES_API_KEY', 'PLACES_API_KEY', 'Google Places API Key'];
     for (let i = 0; i < candidates.length; i++) {
@@ -90,49 +85,49 @@ function getPlacesApiKey() {
   );
 }
 
-function callPlacesApi(endpoint, params) {
-  const requestParams = Object.assign({}, params || {}, {
-    key: getPlacesApiKey(),
-    language: PLACES.LANGUAGE,
-    region: PLACES.REGION
-  });
+function callPlacesNewApi(path, options) {
+  const opts = options || {};
+  const request = {
+    method: opts.method || 'get',
+    headers: {
+      'X-Goog-Api-Key': getPlacesApiKey(),
+      'X-Goog-FieldMask': opts.fieldMask || ''
+    },
+    muteHttpExceptions: true,
+    followRedirects: true
+  };
 
-  const url = PLACES.API_BASE + endpoint + '/json?' + buildQuery(requestParams);
+  if (opts.payload !== undefined) {
+    request.contentType = 'application/json';
+    request.payload = JSON.stringify(opts.payload);
+  }
+
+  const url = PLACES.API_BASE + path;
   let lastError = null;
 
   for (let attempt = 0; attempt <= PLACES.MAX_RETRIES; attempt++) {
     try {
-      const response = UrlFetchApp.fetch(url, {
-        method: 'get',
-        muteHttpExceptions: true,
-        followRedirects: true
-      });
-
+      const response = UrlFetchApp.fetch(url, request);
       const httpCode = response.getResponseCode();
       const body = response.getContentText();
-      let json;
+      let json = {};
 
-      try {
-        json = JSON.parse(body);
-      } catch (parseError) {
-        throw new Error('Places API応答をJSON解析できません: HTTP ' + httpCode);
+      if (body) {
+        try {
+          json = JSON.parse(body);
+        } catch (parseError) {
+          throw new Error('Places API応答をJSON解析できません: HTTP ' + httpCode);
+        }
       }
 
-      const status = json.status || '';
-      if (httpCode >= 200 && httpCode < 300 &&
-          (status === 'OK' || status === 'ZERO_RESULTS')) {
-        return json;
-      }
+      if (httpCode >= 200 && httpCode < 300) return json;
 
-      const retryable = httpCode === 429 || httpCode >= 500 ||
-        status === 'OVER_QUERY_LIMIT' || status === 'UNKNOWN_ERROR';
-
+      const apiMessage = json.error && json.error.message ? json.error.message : '';
+      const retryable = httpCode === 429 || httpCode >= 500;
       lastError = new Error(
-        'Places APIエラー: status=' + status +
-        ', HTTP=' + httpCode +
-        (json.error_message ? ', message=' + json.error_message : '')
+        'Places API (New) エラー: HTTP=' + httpCode +
+        (apiMessage ? ', message=' + apiMessage : '')
       );
-
       if (!retryable || attempt === PLACES.MAX_RETRIES) throw lastError;
     } catch (error) {
       lastError = error;
@@ -142,18 +137,7 @@ function callPlacesApi(endpoint, params) {
     Utilities.sleep(PLACES.RETRY_BASE_MS * Math.pow(2, attempt));
   }
 
-  throw lastError || new Error('Places API呼び出しに失敗しました。');
-}
-
-function buildQuery(params) {
-  return Object.keys(params)
-    .filter(function(key) {
-      return params[key] !== undefined && params[key] !== null && params[key] !== '';
-    })
-    .map(function(key) {
-      return encodeURIComponent(key) + '=' + encodeURIComponent(String(params[key]));
-    })
-    .join('&');
+  throw lastError || new Error('Places API (New) 呼び出しに失敗しました。');
 }
 
 function safeString(value) {
@@ -164,8 +148,7 @@ function normalizeText(value) {
   return safeString(value)
     .normalize('NFKC')
     .toLowerCase()
-    .replace(/[\s　・･,，.．'’"“”\-ー―‐_/\\()（）\[\]【】]/g, '')
-    .replace(/ホテル|旅館|宿泊施設/g, function(match) { return match; });
+    .replace(/[\s　・･,，.．'’"“”\-ー―‐_/\\()（）\[\]【】]/g, '');
 }
 
 function normalizeAddress(address) {
@@ -192,33 +175,59 @@ function formatCheckedAt() {
   return Utilities.formatDate(new Date(), PLACES.TIMEZONE, 'yyyy-MM-dd');
 }
 
-/* =====================================================
- * Part2: 施設検索・候補比較・Place ID取得
- * ===================================================== */
-
 function searchPlaceFromGoogle(query, options) {
   const text = safeString(query);
   if (!text) return [];
 
-  const params = { query: text };
   const opts = options || {};
+  const payload = {
+    textQuery: text,
+    languageCode: PLACES.LANGUAGE,
+    regionCode: PLACES.REGION,
+    pageSize: Math.max(1, Math.min(20, Number(opts.pageSize || 20)))
+  };
 
-  if (opts.location) params.location = opts.location;
-  if (opts.radius) params.radius = opts.radius;
-  if (opts.type) params.type = opts.type;
+  if (opts.locationBias) payload.locationBias = opts.locationBias;
+  if (opts.locationRestriction) payload.locationRestriction = opts.locationRestriction;
+  if (opts.includedType) payload.includedType = opts.includedType;
+  if (opts.openNow === true) payload.openNow = true;
 
-  const json = callPlacesApi('/textsearch', params);
-  return json.results || [];
+  const json = callPlacesNewApi('/places:searchText', {
+    method: 'post',
+    fieldMask: PLACES.SEARCH_FIELDS,
+    payload: payload
+  });
+
+  return (json.places || []).map(adaptNewPlaceToLegacyShape_);
+}
+
+function adaptNewPlaceToLegacyShape_(place) {
+  return {
+    place_id: safeString(place && place.id),
+    name: place && place.displayName ? safeString(place.displayName.text) : '',
+    formatted_address: safeString(place && place.formattedAddress),
+    business_status: safeString(place && place.businessStatus),
+    rating: place && place.rating !== undefined ? place.rating : '',
+    user_ratings_total: place && place.userRatingCount !== undefined ? place.userRatingCount : '',
+    geometry: {
+      location: {
+        lat: place && place.location && place.location.latitude !== undefined
+          ? place.location.latitude : '',
+        lng: place && place.location && place.location.longitude !== undefined
+          ? place.location.longitude : ''
+      }
+    },
+    types: place && place.types ? place.types : [],
+    url: safeString(place && place.googleMapsUri),
+    _newApi: place || {}
+  };
 }
 
 function buildFacilitySearchQuery(facility) {
-  const parts = [
-    facility.name,
-    facility.address,
-    facility.municipality
-  ].map(safeString).filter(Boolean);
-
-  return parts.join(' ');
+  return [facility.name, facility.address, facility.municipality]
+    .map(safeString)
+    .filter(Boolean)
+    .join(' ');
 }
 
 function findBestPlaceCandidate(facility) {
@@ -229,13 +238,10 @@ function findBestPlaceCandidate(facility) {
   if (!results.length) return null;
 
   const ranked = results.map(function(place) {
-    return {
-      place: place,
-      score: calculatePlaceMatchScore(facility, place)
-    };
+    return { place: place, score: calculatePlaceMatchScore(facility, place) };
   }).sort(function(a, b) {
     if (b.score !== a.score) return b.score - a.score;
-    return (b.place.user_ratings_total || 0) - (a.place.user_ratings_total || 0);
+    return Number(b.place.user_ratings_total || 0) - Number(a.place.user_ratings_total || 0);
   });
 
   const best = ranked[0];
@@ -255,7 +261,6 @@ function calculatePlaceMatchScore(facility, place) {
   const sourceAddress = normalizeAddress(facility.address);
   const googleAddress = normalizeAddress(place.formatted_address);
   const municipality = normalizeText(facility.municipality);
-
   let score = 0;
 
   if (sourceName && googleName) {
@@ -270,24 +275,18 @@ function calculatePlaceMatchScore(facility, place) {
     else score += Math.round(similarityRatio(sourceAddress, googleAddress) * 28);
   }
 
-  if (municipality && normalizeText(place.formatted_address).indexOf(municipality) !== -1) {
-    score += 10;
-  }
-
+  if (municipality && normalizeText(place.formatted_address).indexOf(municipality) !== -1) score += 10;
   if (place.business_status === 'OPERATIONAL') score += 3;
   if (place.business_status === 'CLOSED_PERMANENTLY') score -= 30;
-
   return Math.max(0, Math.min(100, score));
 }
 
 function similarityRatio(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 1;
-
   const longer = a.length >= b.length ? a : b;
   const shorter = a.length >= b.length ? b : a;
   if (!longer.length) return 1;
-
   return (longer.length - levenshteinDistance(longer, shorter)) / longer.length;
 }
 
@@ -295,10 +294,8 @@ function levenshteinDistance(a, b) {
   const matrix = [];
   let i;
   let j;
-
   for (i = 0; i <= b.length; i++) matrix[i] = [i];
   for (j = 0; j <= a.length; j++) matrix[0][j] = j;
-
   for (i = 1; i <= b.length; i++) {
     for (j = 1; j <= a.length; j++) {
       const cost = b.charAt(i - 1) === a.charAt(j - 1) ? 0 : 1;
@@ -309,34 +306,56 @@ function levenshteinDistance(a, b) {
       );
     }
   }
-
   return matrix[b.length][a.length];
 }
-
-/* =====================================================
- * Part3: 詳細取得・正規化・営業状態判定
- * ===================================================== */
 
 function getPlaceDetails(placeId) {
   const id = safeString(placeId);
   if (!id) return null;
+  const json = callPlacesNewApi('/places/' + encodeURIComponent(id), {
+    method: 'get',
+    fieldMask: PLACES.DETAILS_FIELDS
+  });
+  return adaptNewPlaceDetailsToLegacyShape_(json);
+}
 
-  const json = callPlacesApi('/details', {
-    place_id: id,
-    fields: PLACES.DETAILS_FIELDS
+function adaptNewPlaceDetailsToLegacyShape_(place) {
+  const components = (place.addressComponents || []).map(function(component) {
+    return {
+      long_name: safeString(component.longText),
+      short_name: safeString(component.shortText),
+      types: component.types || []
+    };
   });
 
-  return json.result || null;
+  return {
+    place_id: safeString(place.id),
+    name: place.displayName ? safeString(place.displayName.text) : '',
+    formatted_address: safeString(place.formattedAddress),
+    address_components: components,
+    formatted_phone_number: safeString(place.nationalPhoneNumber),
+    international_phone_number: safeString(place.internationalPhoneNumber),
+    website: safeString(place.websiteUri),
+    url: safeString(place.googleMapsUri),
+    business_status: safeString(place.businessStatus),
+    rating: place.rating === undefined ? '' : place.rating,
+    user_ratings_total: place.userRatingCount === undefined ? '' : place.userRatingCount,
+    geometry: {
+      location: {
+        lat: place.location && place.location.latitude !== undefined ? place.location.latitude : '',
+        lng: place.location && place.location.longitude !== undefined ? place.location.longitude : ''
+      }
+    },
+    types: place.types || [],
+    opening_hours: place.regularOpeningHours || null,
+    _newApi: place
+  };
 }
 
 function normalizePlaceData(place) {
   if (!place) return {};
-
   const components = place.address_components || [];
-  const location = place.geometry && place.geometry.location
-    ? place.geometry.location
-    : {};
-
+  const location = place.geometry && place.geometry.location ? place.geometry.location : {};
   return {
     placeId: safeString(place.place_id),
     name: safeString(place.name),
@@ -344,7 +363,7 @@ function normalizePlaceData(place) {
     postalCode: extractAddressComponent(components, 'postal_code'),
     municipality: extractMunicipality(components),
     phone: safeString(place.formatted_phone_number || place.international_phone_number),
-    website: safeString(place.website || place.url),
+    website: safeString(place.website),
     googleMapsUrl: safeString(place.url),
     rating: place.rating === undefined ? '' : place.rating,
     reviews: place.user_ratings_total === undefined ? '' : place.user_ratings_total,
@@ -359,21 +378,13 @@ function normalizePlaceData(place) {
 
 function extractAddressComponent(components, type) {
   for (let i = 0; i < components.length; i++) {
-    if ((components[i].types || []).indexOf(type) !== -1) {
-      return safeString(components[i].long_name);
-    }
+    if ((components[i].types || []).indexOf(type) !== -1) return safeString(components[i].long_name);
   }
   return '';
 }
 
 function extractMunicipality(components) {
-  const priorities = [
-    'locality',
-    'ward',
-    'administrative_area_level_2',
-    'sublocality_level_1'
-  ];
-
+  const priorities = ['locality', 'administrative_area_level_2', 'sublocality_level_1', 'postal_town'];
   for (let i = 0; i < priorities.length; i++) {
     const value = extractAddressComponent(components, priorities[i]);
     if (value) return value;
@@ -386,6 +397,7 @@ function translateBusinessStatus(status) {
     case 'OPERATIONAL': return '営業中';
     case 'CLOSED_TEMPORARILY': return '一時休業';
     case 'CLOSED_PERMANENTLY': return '閉業';
+    case 'FUTURE_OPENING': return '開業予定';
     default: return '不明';
   }
 }
@@ -394,25 +406,17 @@ function buildFacilityNotes(existingNotes, facility, normalized, matchScore) {
   const notes = [];
   const existing = safeString(existingNotes);
   if (existing) notes.push(existing);
-
-  if (normalized.businessStatus) {
-    notes.push('Google営業状態:' + normalized.businessStatus);
-  }
-
-  if (matchScore !== '' && matchScore !== null && matchScore !== undefined) {
-    notes.push('一致スコア:' + matchScore);
-  }
+  if (normalized.businessStatus) notes.push('Google営業状態:' + normalized.businessStatus);
+  if (matchScore !== '' && matchScore !== null && matchScore !== undefined) notes.push('一致スコア:' + matchScore);
 
   const sourcePostal = normalizePostalCode(facility.postalCode);
   const googlePostal = normalizePostalCode(normalized.postalCode);
   if (sourcePostal && googlePostal) {
     notes.push(sourcePostal === googlePostal ? '郵便番号一致' : '郵便番号不一致(' + googlePostal + ')');
   }
-
   if (normalized.website) notes.push('公式サイト確認');
   if (normalized.phone) notes.push('電話番号確認');
   notes.push('Google確認日:' + normalized.checkedAt);
-
   return uniqueStrings(notes).join('／');
 }
 
@@ -426,20 +430,13 @@ function uniqueStrings(items) {
   });
 }
 
-/* =====================================================
- * Part4: Sheets更新・一括処理・重複チェック
- * ===================================================== */
-
 function updateFacilityRow(sheet, rowNumber, placeData, headerMap, facility, matchScore) {
   if (!sheet) throw new Error('sheet が指定されていません。');
   if (rowNumber < 2) throw new Error('rowNumber は2以上を指定してください。');
 
   const map = headerMap || getHeaderMap(sheet);
   const source = facility || readFacilityFromRow(sheet, rowNumber, map);
-  const normalized = placeData && placeData.placeId !== undefined
-    ? placeData
-    : normalizePlaceData(placeData);
-
+  const normalized = placeData && placeData.placeId !== undefined ? placeData : normalizePlaceData(placeData);
   const updates = {
     placeId: normalized.placeId,
     googleName: normalized.name,
@@ -458,11 +455,8 @@ function updateFacilityRow(sheet, rowNumber, placeData, headerMap, facility, mat
 
   Object.keys(updates).forEach(function(key) {
     const column = map[key];
-    if (column && updates[key] !== undefined) {
-      sheet.getRange(rowNumber, column).setValue(updates[key]);
-    }
+    if (column && updates[key] !== undefined) sheet.getRange(rowNumber, column).setValue(updates[key]);
   });
-
   return updates;
 }
 
@@ -473,18 +467,15 @@ function enrichActiveSheetWithPlaces() {
 
 function enrichSheetWithPlaces(sheet, options) {
   if (!sheet) throw new Error('対象シートがありません。');
-
   const opts = options || {};
   const headerMap = getHeaderMap(sheet);
   validateRequiredHeaders(headerMap);
-
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { processed: 0, updated: 0, skipped: 0, errors: [] };
 
   const startRow = Math.max(2, Number(opts.startRow || 2));
   const maxRows = Math.max(1, Number(opts.maxRows || PLACES.DEFAULT_BATCH_SIZE));
   const endRow = Math.min(lastRow, startRow + maxRows - 1);
-
   let processed = 0;
   let updated = 0;
   let skipped = 0;
@@ -492,14 +483,12 @@ function enrichSheetWithPlaces(sheet, options) {
 
   for (let row = startRow; row <= endRow; row++) {
     processed++;
-
     try {
       const facility = readFacilityFromRow(sheet, row, headerMap);
       if (!facility.name && !facility.address) {
         skipped++;
         continue;
       }
-
       if (opts.skipExisting !== false && facility.placeId) {
         skipped++;
         continue;
@@ -508,9 +497,7 @@ function enrichSheetWithPlaces(sheet, options) {
       const best = findBestPlaceCandidate(facility);
       if (!best || !best.accepted) {
         if (headerMap.notes) {
-          const note = best
-            ? 'Google候補要確認（一致スコア:' + best.score + '）'
-            : 'Google候補なし';
+          const note = best ? 'Google候補要確認（一致スコア:' + best.score + '）' : 'Google候補なし';
           sheet.getRange(row, headerMap.notes).setValue(
             uniqueStrings([facility.notes, note, 'Google確認日:' + formatCheckedAt()]).join('／')
           );
@@ -523,7 +510,6 @@ function enrichSheetWithPlaces(sheet, options) {
       const normalized = normalizePlaceData(details || best.place);
       updateFacilityRow(sheet, row, normalized, headerMap, facility, best.score);
       updated++;
-
       Utilities.sleep(PLACES.REQUEST_INTERVAL_MS);
     } catch (error) {
       errors.push({ row: row, message: error.message });
@@ -543,7 +529,6 @@ function enrichSheetWithPlaces(sheet, options) {
     errors: errors,
     nextStartRow: endRow < lastRow ? endRow + 1 : null
   };
-
   Logger.log(JSON.stringify(summary));
   return summary;
 }
@@ -552,21 +537,15 @@ function refreshExistingPlaceDetails() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const headerMap = getHeaderMap(sheet);
   validateRequiredHeaders(headerMap);
-
-  if (!headerMap.placeId) {
-    throw new Error('Place ID列がありません。');
-  }
+  if (!headerMap.placeId) throw new Error('Place ID列がありません。');
 
   const lastRow = sheet.getLastRow();
   let updated = 0;
-
   for (let row = 2; row <= lastRow; row++) {
     const facility = readFacilityFromRow(sheet, row, headerMap);
     if (!facility.placeId) continue;
-
     const details = getPlaceDetails(facility.placeId);
     if (!details) continue;
-
     updateFacilityRow(
       sheet,
       row,
@@ -578,17 +557,14 @@ function refreshExistingPlaceDetails() {
     updated++;
     Utilities.sleep(PLACES.REQUEST_INTERVAL_MS);
   }
-
   return { updated: updated };
 }
 
 function getHeaderMap(sheet) {
   const lastColumn = sheet.getLastColumn();
   if (lastColumn < 1) return {};
-
   const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
   const map = {};
-
   Object.keys(PLACES.HEADERS).forEach(function(key) {
     const aliases = PLACES.HEADERS[key].map(normalizeText);
     for (let col = 0; col < headers.length; col++) {
@@ -598,7 +574,6 @@ function getHeaderMap(sheet) {
       }
     }
   });
-
   return map;
 }
 
@@ -611,11 +586,9 @@ function validateRequiredHeaders(headerMap) {
 function readFacilityFromRow(sheet, rowNumber, headerMap) {
   const lastColumn = sheet.getLastColumn();
   const row = sheet.getRange(rowNumber, 1, 1, lastColumn).getDisplayValues()[0];
-
   function value(key) {
     return headerMap[key] ? safeString(row[headerMap[key] - 1]) : '';
   }
-
   return {
     rowNumber: rowNumber,
     postalCode: value('postalCode'),
@@ -632,7 +605,6 @@ function findDuplicateFacilities() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const headerMap = getHeaderMap(sheet);
   validateRequiredHeaders(headerMap);
-
   const lastRow = sheet.getLastRow();
   const seen = {};
   const duplicates = [];
@@ -640,15 +612,10 @@ function findDuplicateFacilities() {
   for (let row = 2; row <= lastRow; row++) {
     const facility = readFacilityFromRow(sheet, row, headerMap);
     if (!facility.name && !facility.address) continue;
-
     const key = normalizeText(facility.name) + '|' + normalizeAddress(facility.address);
     if (!key || key === '|') continue;
-
-    if (seen[key]) {
-      duplicates.push({ firstRow: seen[key], duplicateRow: row, key: key });
-    } else {
-      seen[key] = row;
-    }
+    if (seen[key]) duplicates.push({ firstRow: seen[key], duplicateRow: row, key: key });
+    else seen[key] = row;
   }
 
   Logger.log(JSON.stringify(duplicates));
@@ -661,29 +628,20 @@ function addPlacesOutputHeaders() {
     'Place ID', 'Google施設名', 'Google住所', '電話番号', '公式サイト',
     '評価', '口コミ数', '営業状態', '緯度', '経度', '一致スコア', '最終確認日'
   ];
-
   const lastColumn = Math.max(1, sheet.getLastColumn());
   const current = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
   const normalizedCurrent = current.map(normalizeText);
   const missing = required.filter(function(header) {
     return normalizedCurrent.indexOf(normalizeText(header)) === -1;
   });
-
-  if (missing.length) {
-    sheet.getRange(1, lastColumn + 1, 1, missing.length).setValues([missing]);
-  }
-
+  if (missing.length) sheet.getRange(1, lastColumn + 1, 1, missing.length).setValues([missing]);
   return { added: missing };
 }
 
-/* =====================================================
- * テスト・診断
- * ===================================================== */
-
 function testPlacesAPI() {
-  const results = searchPlaceFromGoogle('名古屋市 ホテル');
-  Logger.log(JSON.stringify(results.slice(0, 3)));
-  return results.slice(0, 3);
+  const results = searchPlaceFromGoogle('名古屋市 ホテル', { pageSize: 3 });
+  Logger.log(JSON.stringify(results));
+  return results;
 }
 
 function testFacilityMatching() {
@@ -692,7 +650,6 @@ function testFacilityMatching() {
     municipality: '名古屋市中村区',
     address: '愛知県名古屋市中村区名駅1丁目1番4号'
   };
-
   const result = findBestPlaceCandidate(sample);
   Logger.log(JSON.stringify(result));
   return result;
@@ -703,6 +660,7 @@ function diagnosePlacesConfiguration() {
     apiKeyConfigured: false,
     activeSheet: '',
     headerMap: {},
+    apiVersion: 'Places API (New)',
     errors: []
   };
 
