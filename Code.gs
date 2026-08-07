@@ -20,6 +20,7 @@ function onOpen() {
     .addSeparator()
     .addItem('⑦ 重複候補を更新', 'runHotelDbV2Duplicates')
     .addItem('⑧ 承認済み修正候補を反映', 'runHotelDbV2ApplyApprovedCorrections')
+    .addItem('⑨ 修正候補を自動仕分け', 'runHotelDbV2TriageCorrections')
     .addToUi();
 }
 
