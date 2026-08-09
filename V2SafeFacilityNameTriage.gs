@@ -13,6 +13,7 @@
 
 const HOTEL_DB_V2_SAFE_NAME_MIN_SCORE = 83;
 const HOTEL_DB_V2_SAFE_NAME_MAX_EXTRA_LENGTH = 40;
+const HOTEL_DB_V2_SAFE_NAME_MIN_BASE_LENGTH = 3;
 
 const HOTEL_DB_V2_SAFE_NAME_RISK_TOKENS = Object.freeze([
   '別邸', '別館', '新館', '本館', '離れ', '別棟', '支店', '本店',
@@ -24,6 +25,10 @@ const HOTEL_DB_V2_SAFE_NAME_RISK_TOKENS = Object.freeze([
 const HOTEL_DB_V2_SAFE_NAME_BUSINESS_RISK_TOKENS = Object.freeze([
   'cafe', 'coffee', 'restaurant', 'bar', 'pub', 'shop', 'sushi',
   'カフェ', '喫茶', 'レストラン', '食堂', '寿司', '売店'
+]);
+
+const HOTEL_DB_V2_SAFE_NAME_GENERIC_BASES = Object.freeze([
+  'ホテル', 'ロッジ', 'hotel', 'lodge', 'inn'
 ]);
 
 function runHotelDbV2SafeFacilityNameTriage() {
@@ -249,8 +254,12 @@ function hotelDbV2SafeNameAffixRelation_(sourceName, proposedName) {
     return { equivalent: false, reason: '片方の施設名がもう片方を前後一致で含まない' };
   }
 
-  if (base.length < 4) {
+  if (base.length < HOTEL_DB_V2_SAFE_NAME_MIN_BASE_LENGTH) {
     return { equivalent: false, reason: '共通施設名が短すぎる' };
+  }
+
+  if (HOTEL_DB_V2_SAFE_NAME_GENERIC_BASES.indexOf(base) !== -1) {
+    return { equivalent: false, reason: '共通施設名が汎用名だけのため自動判定しない' };
   }
 
   if (!extra) {
@@ -497,6 +506,14 @@ function runHotelDbV2SafeFacilityNameTriageTests() {
       name: 'スコア83未満は対象外',
       input: Object.assign({}, base, {
         matchScore: 82
+      }),
+      expected: false
+    },
+    {
+      name: '汎用名だけの共通名は対象外',
+      input: Object.assign({}, base, {
+        sourceName: 'HOTEL',
+        proposedName: 'ABC HOTEL'
       }),
       expected: false
     }
