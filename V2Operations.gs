@@ -158,8 +158,15 @@ function hotelDbV2RemoveRowsForSheetId_(sheet, sheetId, columnNumber) {
 }
 
 function hotelDbV2ApplyApprovedCorrections_() {
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const correctionSheet = spreadsheet.getSheetByName(HOTEL_DB_V2_CONFIG.SHEETS.CORRECTIONS);
+  return hotelDbV2ApplyApprovedCorrectionsWithContext_({});
+}
+
+function hotelDbV2ApplyApprovedCorrectionsWithContext_(options) {
+  const opts = options || {};
+  const spreadsheet = opts.spreadsheet || SpreadsheetApp.getActiveSpreadsheet();
+  const correctionSheet = opts.correctionSheet || spreadsheet.getSheetByName(
+    HOTEL_DB_V2_CONFIG.SHEETS.CORRECTIONS
+  );
   if (!correctionSheet || correctionSheet.getLastRow() < 2) {
     return { approved: 0, applied: 0, conflicts: 0, errors: 0 };
   }
@@ -168,7 +175,7 @@ function hotelDbV2ApplyApprovedCorrections_() {
   const values = correctionSheet.getRange(
     2, 1, correctionSheet.getLastRow() - 1, HOTEL_DB_V2_CORRECTION_HEADERS.length
   ).getDisplayValues();
-  const historySheet = hotelDbV2GetOrCreateSheet_(
+  const historySheet = opts.historySheet || hotelDbV2GetOrCreateSheet_(
     spreadsheet, HOTEL_DB_V2_CONFIG.SHEETS.HISTORY, HOTEL_DB_V2_HISTORY_HEADERS
   );
 
@@ -268,4 +275,3 @@ function hotelDbV2ResetCheckpoint_() {
   hotelDbV2ClearCheckpoint_(spreadsheet, sheet, 'refresh');
   return { reset: true, sheet: sheet.getName() };
 }
-
