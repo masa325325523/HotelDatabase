@@ -118,10 +118,6 @@ function hotelDbV2CountyMunicipalityDecision_(input) {
     return hotelDbV2CountyMunicipalityNo_('営業中以外');
   }
 
-  if (Number(data.matchScore || 0) < HOTEL_DB_V2_COUNTY_TRIAGE_MIN_SCORE) {
-    return hotelDbV2CountyMunicipalityNo_('一致スコア不足');
-  }
-
   if (
     differences.length !== 2 ||
     differences[0] !== '住所' ||
@@ -198,11 +194,26 @@ function hotelDbV2CountyMunicipalityDecision_(input) {
     return hotelDbV2CountyMunicipalityNo_('Google住所に郡町村の並びがない');
   }
 
+  const score = Number(data.matchScore || 0);
+  const hasOazaDifference =
+    /大字/u.test(sourceAddress) !== /大字/u.test(proposedAddress);
+  const safeOazaLowScore =
+    hasOazaDifference &&
+    score >= HOTEL_DB_V2_CONFIG.AUTO_ACCEPT_SCORE;
+
+  if (
+    score < HOTEL_DB_V2_COUNTY_TRIAGE_MIN_SCORE &&
+    !safeOazaLowScore
+  ) {
+    return hotelDbV2CountyMunicipalityNo_('一致スコア不足');
+  }
+
   return {
     equivalent: true,
-    confidence: 98,
-    reason:
-      '郡と町村の列分けだけが異なります。元データは郡を市区町村列・町村を住所列に保持し、Googleは町村を市区町村列・郡を住所側に保持していますが、結合住所は同一です。元データ維持を推奨します。'
+    confidence: safeOazaLowScore ? 97 : 98,
+    reason: safeOazaLowScore
+      ? '郵便番号・施設名・結合住所が一致し、低い一致スコアの原因は郡と町村の列分けおよび「大字」の有無による表記差です。番地は一致しているため、元データ維持を推奨します。'
+      : '郡と町村の列分けだけが異なります。元データは郡を市区町村列・町村を住所列に保持し、Googleは町村を市区町村列・郡を住所側に保持していますが、結合住所は同一です。元データ維持を推奨します。'
   };
 }
 
@@ -290,6 +301,51 @@ function runHotelDbV2CountyMunicipalityTriageTests() {
       expected: true
     },
     {
+      name: '大字差ならスコア78でも安全条件を満たせば同一所在地',
+      input: Object.assign({}, base, {
+        sourcePostalCode: '689-4401',
+        proposedPostalCode: '689-4401',
+        sourceMunicipality: '鳥取県日野郡',
+        proposedMunicipality: '鳥取県江府町',
+        sourceAddress: '江府町大字江尾2064',
+        proposedAddress: '日野郡江府町江尾2064',
+        sourceName: '門脇旅館',
+        proposedName: '門脇旅館',
+        matchScore: 78
+      }),
+      expected: true
+    },
+    {
+      name: '大字差でも自動受付基準未満は同一扱いしない',
+      input: Object.assign({}, base, {
+        sourcePostalCode: '689-4401',
+        proposedPostalCode: '689-4401',
+        sourceMunicipality: '鳥取県日野郡',
+        proposedMunicipality: '鳥取県江府町',
+        sourceAddress: '江府町大字江尾2064',
+        proposedAddress: '日野郡江府町江尾2064',
+        sourceName: '門脇旅館',
+        proposedName: '門脇旅館',
+        matchScore: 74
+      }),
+      expected: false
+    },
+    {
+      name: '大字差があっても番地が違えば同一扱いしない',
+      input: Object.assign({}, base, {
+        sourcePostalCode: '689-4401',
+        proposedPostalCode: '689-4401',
+        sourceMunicipality: '鳥取県日野郡',
+        proposedMunicipality: '鳥取県江府町',
+        sourceAddress: '江府町大字江尾2064',
+        proposedAddress: '日野郡江府町江尾2065',
+        sourceName: '門脇旅館',
+        proposedName: '門脇旅館',
+        matchScore: 78
+      }),
+      expected: false
+    },
+    {
       name: '番地が違えば同一扱いしない',
       input: Object.assign({}, base, {
         proposedAddress: '岩美郡岩美町岩井544'
@@ -319,7 +375,7 @@ function runHotelDbV2CountyMunicipalityTriageTests() {
       expected: false
     },
     {
-      name: 'スコア90未満は同一扱いしない',
+      name: '大字差がないスコア90未満は同一扱いしない',
       input: Object.assign({}, base, {
         matchScore: 89
       }),

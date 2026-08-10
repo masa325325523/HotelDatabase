@@ -313,6 +313,7 @@ function hotelDbV2NormalizeAddress_(value) {
     .replace(/^日本[、,\s]*/u, '')
     .replace(/^japan[、,\s]*/i, '')
     .replace(/〒\s*\d{3}-?\d{4}\s*/u, '')
+    .replace(/大字/g, '')
     .replace(/[‐‑‒–—―ー−]/g, '-')
     .replace(/丁目/g, '-')
     .replace(/番地の?/g, '-')
