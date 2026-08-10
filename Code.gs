@@ -21,6 +21,7 @@ function onOpen() {
     .addItem('⑦ 重複候補を更新', 'runHotelDbV2Duplicates')
     .addItem('⑧ 承認済み修正候補を反映', 'runHotelDbV2ApplyApprovedCorrections')
     .addItem('⑨ 修正候補を自動仕分け', 'runHotelDbV2TriageCorrections')
+    .addItem('⑩ 重複候補を自動仕分け', 'runHotelDbV2DuplicateTriage')
     .addToUi();
 }
 
