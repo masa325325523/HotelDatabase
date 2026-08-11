@@ -2,11 +2,11 @@
 
 ## 目的
 
-⑧「承認済み修正候補を反映」を本番データで試す前に、同じ中核処理を一時シートだけで検証します。
+⑧「承認済み修正候補を反映」を本番データで試す前に、まず同じ中核処理を一時シートだけで検証し、その後コピー版スプレッドシートで⑧そのものをUI経由で検証します。
 
-本物の `修正候補` と `修正履歴` は使用しません。
+通常の鳥取データでは⑧を実行しません。
 
-## 検証する内容
+## 1. 中核処理の隔離テスト
 
 `runHotelDbV2ApprovedCorrectionSafetyTests` は一時的に3枚のテストシートを作成し、次を確認します。
 
@@ -25,33 +25,77 @@
 
 内部では合計16項目をチェックします。
 
+## 2. ⑧そのもののUIテスト
+
+コピー版スプレッドシート名に `PR13` と `⑧反映テスト` の両方が含まれている場合だけ実行できます。
+
+新規ファイル `V2ApprovedCorrectionUiTest.gs` の3関数を使います。
+
+### セットアップ
+
+`setupHotelDbV2ApprovedCorrectionUiTest`
+
+- 通常の `修正候補` と `修正履歴` をバックアップ名へ退避
+- `PR13_UI反映元` を作成
+- ⑧が使う標準名 `修正候補` と `修正履歴` にはテスト専用データだけを配置
+- 承認2件（正常1件・競合1件）、未確認1件を用意
+
+セットアップ完了後に、スプレッドシートのメニューから⑧「承認済み修正候補を反映」を実行します。
+
+期待結果は次です。
+
+```text
+承認対象: 2
+反映済み: 1
+要再確認: 1
+エラー: 0
+```
+
+### 検証
+
+⑧実行後に `verifyHotelDbV2ApprovedCorrectionUiTest` を実行します。
+
+12項目を確認し、正常なら次を表示します。
+
+```text
+PR #13 ⑧UIテスト 成功
+
+成功件数: 12件
+失敗件数: 0件
+正常承認: 1件だけ反映
+未承認: 未反映
+競合: 要再確認・未反映
+履歴: 2件記録
+```
+
+### 復元
+
+検証後に `cleanupHotelDbV2ApprovedCorrectionUiTest` を実行します。
+
+- UIテスト専用シートを削除
+- 退避した `修正候補` と `修正履歴` を元の標準名へ復元
+
 ## 本番コードの変更
 
 `hotelDbV2ApplyApprovedCorrections_()` の外部動作は変更しません。
 
 本番関数は、共通中核処理 `hotelDbV2ApplyApprovedCorrectionsWithContext_({})` を呼ぶだけです。
 
-テスト時だけ、共通中核処理へ一時の修正候補シート・履歴シートを明示的に渡します。これにより、本物の修正候補に `承認` が残っていてもテスト中に処理されません。
+隔離テスト時だけ、共通中核処理へ一時の修正候補シート・履歴シートを明示的に渡します。
 
 ## Apps Scriptでの手順
 
 1. PR #13の `V2Operations.gs` でApps Scriptの同名ファイルを置き換える
-2. 新しいスクリプト `V2ApprovedCorrectionSafetyTests` を作る
-3. PR #13の `V2ApprovedCorrectionSafetyTests.gs` を貼り付けて保存する
-4. `runHotelDbV2ApprovedCorrectionSafetyTests` を実行する
-5. 次の表示を確認する
-
-```text
-承認済み修正反映 安全テスト 成功
-
-成功件数: 16件
-失敗件数: 0件
-本物の修正候補・修正履歴: 変更なし
-一時テストシート: 削除済み
-```
+2. `V2ApprovedCorrectionSafetyTests.gs` を追加する
+3. `runHotelDbV2ApprovedCorrectionSafetyTests` を実行し、16件成功を確認する
+4. スプレッドシートをコピーし、コピー名に `PR13_⑧反映テスト` を含める
+5. コピー版のApps Scriptへ `V2ApprovedCorrectionUiTest.gs` を追加する
+6. `setupHotelDbV2ApprovedCorrectionUiTest` を実行する
+7. コピー版だけでメニュー⑧を実行する
+8. `verifyHotelDbV2ApprovedCorrectionUiTest` を実行する
+9. `cleanupHotelDbV2ApprovedCorrectionUiTest` を実行する
+10. 問題がなければPR #13をマージする
 
 ## 注意
 
-PR #13の検証中は、通常メニューの⑧「承認済み修正候補を反映」は実行しません。
-
-この自己診断が成功したあと、別途テスト専用シートを使って⑧そのもののUI経由テストを行い、問題がなければPR #13をマージします。
+通常のテストDBや鳥取本体では、PR #13検証中に⑧を実行しません。
