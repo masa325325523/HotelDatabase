@@ -453,8 +453,8 @@ function runHotelDbV2LowScoreReviewTriageTests() {
         sourceName: 'ホープツリー天王寺',
         candidateName: 'HOPETREE 天王寺',
         municipality: '大阪市阿倍野区',
-        sourceAddress: '大阪府大阪市阿倍野区松崎町1-7',
-        candidateAddress: '大阪府大阪市阿倍野区松崎町1丁目1-7',
+        sourceAddress: '大阪府大阪市阿倍野区松崎町1丁目1-7',
+        candidateAddress: '大阪府大阪市阿倍野区松崎町1-1-7',
         matchScore: 57
       }),
       expected: '同一施設有力'
