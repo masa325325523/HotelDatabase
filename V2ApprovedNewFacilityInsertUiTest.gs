@@ -98,10 +98,10 @@ function setupHotelDbV2ApprovedNewFacilityUiTest() {
       );
     }
 
-    const normalRow = eligible[0].slice();
-    const duplicateRow = eligible[1].slice();
-    const changedRow = eligible[2].slice();
-    const unapprovedRow = eligible[0].slice();
+    let normalRow = eligible[0].slice();
+    let duplicateRow = eligible[1].slice();
+    let changedRow = eligible[2].slice();
+    let unapprovedRow = eligible[0].slice();
 
     realCandidates.setName(HOTEL_DB_V2_PR17_UI_TEST.BACKUP_CANDIDATES);
     backedUpCandidates = true;
@@ -138,9 +138,11 @@ function setupHotelDbV2ApprovedNewFacilityUiTest() {
     testCandidateSheet = spreadsheet.insertSheet(
       HOTEL_DB_V2_APPROVED_NEW_FACILITY.SHEET_NAME
     );
-    const originalHeaders = spreadsheet
-      .getSheetByName(HOTEL_DB_V2_PR17_UI_TEST.BACKUP_CANDIDATES)
-      .getRange(1, 1, 1, spreadsheet.getSheetByName(HOTEL_DB_V2_PR17_UI_TEST.BACKUP_CANDIDATES).getLastColumn())
+    const backupCandidateSheet = spreadsheet.getSheetByName(
+      HOTEL_DB_V2_PR17_UI_TEST.BACKUP_CANDIDATES
+    );
+    const originalHeaders = backupCandidateSheet
+      .getRange(1, 1, 1, backupCandidateSheet.getLastColumn())
       .getDisplayValues()[0];
     testCandidateSheet.getRange(1, 1, 1, originalHeaders.length).setValues([originalHeaders]);
     const testMap = hotelDbV2ApprovedNewFacilityHeaderMap_(testCandidateSheet);
