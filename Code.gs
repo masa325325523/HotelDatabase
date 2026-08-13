@@ -24,6 +24,7 @@ function onOpen() {
     .addItem('⑩ 重複候補を自動仕分け', 'runHotelDbV2DuplicateTriage')
     .addItem('⑪ 低スコア要確認を自動仕分け', 'runHotelDbV2LowScoreReviewTriageWithMunicipalityRefinement')
     .addItem('⑫ 閉業・未検出を削除候補に仕分け', 'runHotelDbV2DeletionCandidateTriage')
+    .addItem('⑬ 営業中の新規宿泊施設を探索', 'runHotelDbV2DiscoverNewFacilities')
     .addToUi();
 }
 
