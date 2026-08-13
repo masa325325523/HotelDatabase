@@ -26,6 +26,8 @@ function onOpen() {
     .addItem('⑫ 閉業・未検出を削除候補に仕分け', 'runHotelDbV2DeletionCandidateTriage')
     .addItem('⑬ 営業中の新規宿泊施設を探索', 'runHotelDbV2DiscoverNewFacilities')
     .addItem('⑭ 承認済み新規追加候補を安全に追加', 'runHotelDbV2ApplyApprovedNewFacilities')
+    .addItem('⑮ 追加済み新規施設の分類候補を作成', 'runHotelDbV2BuildNewFacilityClassificationCandidates')
+    .addItem('⑯ 承認済み宿泊分類・備考を安全に反映', 'runHotelDbV2ApplyApprovedNewFacilityClassifications')
     .addToUi();
 }
 
