@@ -21,7 +21,7 @@ function onOpen() {
     .addItem('⑦ 重複候補を更新', 'runHotelDbV2Duplicates')
     .addItem('⑧ 承認済み修正候補を反映', 'runHotelDbV2ApplyApprovedCorrections')
     .addItem('⑨ 修正候補を自動仕分け', 'runHotelDbV2TriageCorrections')
-    .addItem('⑩ 重複候補を自動仕分け', 'runHotelDbV2DuplicateTriage')
+    .addItem('⑩ 重複候補を自動仕分け', 'runHotelDbV2DuplicateTriageWithPr20Snapshots')
     .addItem('⑪ 低スコア要確認を自動仕分け', 'runHotelDbV2LowScoreReviewTriageWithMunicipalityRefinement')
     .addItem('⑫ 閉業・未検出を削除候補に仕分け', 'runHotelDbV2DeletionCandidateTriage')
     .addItem('⑬ 営業中の新規宿泊施設を探索', 'runHotelDbV2DiscoverNewFacilities')
@@ -29,6 +29,7 @@ function onOpen() {
     .addItem('⑮ 追加済み新規施設の分類候補を作成', 'runHotelDbV2BuildNewFacilityClassificationCandidates')
     .addItem('⑯ 承認済み宿泊分類・備考を安全に反映', 'runHotelDbV2ApplyApprovedNewFacilityClassifications')
     .addItem('⑰ 承認済み閉業候補を安全に除外', 'runHotelDbV2ApplyApprovedClosedFacilityRemovals')
+    .addItem('⑱ 承認済み重複候補を安全に整理', 'runHotelDbV2ApplyApprovedDuplicateConsolidations')
     .addToUi();
 }
 
