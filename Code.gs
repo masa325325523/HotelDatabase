@@ -28,6 +28,7 @@ function onOpen() {
     .addItem('⑭ 承認済み新規追加候補を安全に追加', 'runHotelDbV2ApplyApprovedNewFacilities')
     .addItem('⑮ 追加済み新規施設の分類候補を作成', 'runHotelDbV2BuildNewFacilityClassificationCandidates')
     .addItem('⑯ 承認済み宿泊分類・備考を安全に反映', 'runHotelDbV2ApplyApprovedNewFacilityClassifications')
+    .addItem('⑰ 承認済み閉業候補を安全に除外', 'runHotelDbV2ApplyApprovedClosedFacilityRemovals')
     .addToUi();
 }
 
