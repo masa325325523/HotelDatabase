@@ -7,7 +7,7 @@
  * - 施設名・住所が現在も正規化後に完全一致することを再確認する。
  * - 除外行にしか存在しない値・数式、または両行の競合値が1つでもあれば整理しない。
  * - 重複整理履歴へ両行を完全保存し、読み戻し検証後に除外行だけ clearContent() する。
- * - deleteRow()/deleteRows() は使用しない。下の行番号を一切ずらさない。
+ * - deleteRow()/deleteRows() は使用しない。下の元行番号を一切ずらさない。
  * - 失敗時は除外行の値・数式を復元し、ハッシュ一致まで確認する。
  */
 
@@ -94,6 +94,17 @@ function hotelDbV2Pr20EmptyResult_() {
   return { approved: 0, applied: 0, conflicts: 0, errors: 0, reconciliation: '一致' };
 }
 
+function hotelDbV2Pr20HeaderMap_(sheet) {
+  const map = {};
+  if (!sheet || sheet.getLastColumn() < 1) return map;
+  sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .forEach(function(value, index) {
+      const header = hotelDbV2Clean_(value);
+      if (header && !map[header]) map[header] = index + 1;
+    });
+  return map;
+}
+
 function hotelDbV2Pr20EnsureDuplicateHeaders_(sheet) {
   let map = hotelDbV2Pr20HeaderMap_(sheet);
   const required = [
@@ -109,17 +120,6 @@ function hotelDbV2Pr20EnsureDuplicateHeaders_(sheet) {
     sheet.getRange(1, sheet.getLastColumn() + 1, 1, missingAudit.length).setValues([missingAudit]);
     map = hotelDbV2Pr20HeaderMap_(sheet);
   }
-  return map;
-}
-
-function hotelDbV2Pr20HeaderMap_(sheet) {
-  const map = {};
-  if (!sheet || sheet.getLastColumn() < 1) return map;
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  headers.forEach(function(value, index) {
-    const header = hotelDbV2Clean_(value);
-    if (header && !map[header]) map[header] = index + 1;
-  });
   return map;
 }
 
@@ -139,9 +139,8 @@ function hotelDbV2Pr20ReadCandidate_(row, map) {
     address1: value('住所1'), row2: Number(value('行2')), name2: value('施設名2'),
     address2: value('住所2'), placeId: value('Place ID'), similarity: Number(value('類似度') || 0),
     checkedAt: value('確認日'), recommendation: value('推奨判定'), triageReason: value('自動判定理由'),
-    confidence: Number(value('信頼度') || 0), snapshotAt: value('整理候補作成日時'),
-    hash1: value('行1ハッシュ'), hash2: value('行2ハッシュ'), snapshotState: value('整理スナップショット状態'),
-    keepRow: Number(value('残す行')), plannedRemoveRow: Number(value('除外予定行')),
+    confidence: Number(value('信頼度') || 0), hash1: value('行1ハッシュ'), hash2: value('行2ハッシュ'),
+    snapshotState: value('整理スナップショット状態'), keepRow: Number(value('残す行')),
     archiveKey: value('整理履歴キー')
   };
 }
@@ -197,13 +196,14 @@ function hotelDbV2ApplyApprovedDuplicateConsolidations_(options) {
       return;
     }
 
+    const removeRow = candidate.keepRow === candidate.row1 ? candidate.row2 : candidate.row1;
     let sourceSheet = null;
     let snapshot1 = null;
     let snapshot2 = null;
     let removeSnapshot = null;
     let archiveRow = 0;
+    let archiveKey = '';
     let didClear = false;
-    const removeRow = candidate.keepRow === candidate.row1 ? candidate.row2 : candidate.row1;
 
     try {
       sourceSheet = spreadsheet.getSheetById(candidate.sheetId);
@@ -242,13 +242,13 @@ function hotelDbV2ApplyApprovedDuplicateConsolidations_(options) {
         return;
       }
 
-      const archiveKey = hotelDbV2Pr20ArchiveKey_(
+      archiveKey = hotelDbV2Pr20ArchiveKey_(
         candidate.sheetId, candidate.row1, candidate.row2, candidate.keepRow, snapshot1.hash, snapshot2.hash
       );
       const existingArchive = hotelDbV2Pr20FindArchive_(archiveSheet, archiveKey);
       if (existingArchive && existingArchive.state === HOTEL_DB_V2_PR20.APPLIED) {
-        hotelDbV2Pr20SetResult_(duplicateSheet, map, duplicateRow, HOTEL_DB_V2_PR20.APPLIED, removeRow, archiveKey, '既に同一整理キーで整理済みです。');
-        result.applied++;
+        hotelDbV2Pr20Conflict_(duplicateSheet, map, duplicateRow, '重複整理履歴では整理済みですが、元DB行が現在も存在します。履歴と元DBの整合を人が確認してください。');
+        result.conflicts++;
         return;
       }
 
@@ -275,6 +275,8 @@ function hotelDbV2ApplyApprovedDuplicateConsolidations_(options) {
         '一致スコア': candidate.similarity, '営業状態': '',
         '詳細': '残す行=' + candidate.keepRow + '／除外行=' + removeRow + '／重複整理履歴キー=' + archiveKey + '／物理行削除なし'
       }));
+
+      // 関連候補の無効化は二次処理。失敗しても元DB整理を巻き戻さない。
       hotelDbV2Pr20InvalidateLinkedCandidates_(spreadsheet, candidate.sheetId, removeRow, duplicateSheet, duplicateRow);
       result.applied++;
     } catch (error) {
@@ -286,11 +288,22 @@ function hotelDbV2ApplyApprovedDuplicateConsolidations_(options) {
           if (archiveRow) hotelDbV2Pr20FinalizeArchive_(archiveSheet, archiveRow, 'ロールバック済み', error.message);
         } catch (rollbackError) {
           if (archiveRow) {
-            hotelDbV2Pr20FinalizeArchive_(archiveSheet, archiveRow, 'ロールバック要確認', error.message + '／' + rollbackError.message);
+            hotelDbV2Pr20FinalizeArchive_(
+              archiveSheet, archiveRow, 'ロールバック要確認', error.message + '／' + rollbackError.message
+            );
           }
         }
+      } else if (archiveRow) {
+        try {
+          hotelDbV2Pr20FinalizeArchive_(archiveSheet, archiveRow, '整理エラー・元DB不変', error.message);
+        } catch (archiveError) {
+          console.error('PR20アーカイブ状態更新失敗: ' + archiveError.message);
+        }
       }
-      hotelDbV2Pr20SetResult_(duplicateSheet, map, duplicateRow, HOTEL_DB_V2_PR20.ERROR, removeRow, candidate.archiveKey || '', '未整理: ' + error.message);
+      hotelDbV2Pr20SetResult_(
+        duplicateSheet, map, duplicateRow, HOTEL_DB_V2_PR20.ERROR,
+        removeRow, archiveKey, '未整理: ' + error.message
+      );
       result.errors++;
     }
   });
@@ -302,7 +315,8 @@ function hotelDbV2ApplyApprovedDuplicateConsolidations_(options) {
 function hotelDbV2Pr20ValidateSource_(sourceSheet, candidate) {
   if (!sourceSheet) return { ok: false, reason: '元シートが見つかりません。' };
   if (sourceSheet.getName() !== candidate.sheetName) return { ok: false, reason: '元シート名が候補作成時から変更されています。' };
-  if (sourceSheet.getName() === HOTEL_DB_V2_PR20_ARCHIVE_SHEET_NAME || sourceSheet.getName() === HOTEL_DB_V2_PR19_ARCHIVE_SHEET_NAME) {
+  if (sourceSheet.getName() === HOTEL_DB_V2_PR20_ARCHIVE_SHEET_NAME ||
+      (typeof HOTEL_DB_V2_PR19_ARCHIVE_SHEET_NAME !== 'undefined' && sourceSheet.getName() === HOTEL_DB_V2_PR19_ARCHIVE_SHEET_NAME)) {
     return { ok: false, reason: '履歴シートは元DBとして整理できません。' };
   }
   if (candidate.row1 < 2 || candidate.row2 < 2 || candidate.row1 > sourceSheet.getLastRow() || candidate.row2 > sourceSheet.getLastRow()) {
@@ -340,6 +354,12 @@ function hotelDbV2Pr20NoLossCheck_(sourceMap, keepSnapshot, removeSnapshot) {
   if (!keepSnapshot || !removeSnapshot || keepSnapshot.headers.length !== removeSnapshot.headers.length) {
     return { ok: false, reason: '比較用スナップショットの列構成が一致しません。' };
   }
+  for (let i = 0; i < keepSnapshot.headers.length; i++) {
+    if (hotelDbV2Clean_(keepSnapshot.headers[i]) !== hotelDbV2Clean_(removeSnapshot.headers[i])) {
+      return { ok: false, reason: '比較用スナップショットの見出し構成が一致しません。' };
+    }
+  }
+
   const conflicts = [];
   for (let i = 0; i < removeSnapshot.headers.length; i++) {
     const header = hotelDbV2Clean_(removeSnapshot.headers[i]) || ('列' + (i + 1));
@@ -361,8 +381,12 @@ function hotelDbV2Pr20NoLossCheck_(sourceMap, keepSnapshot, removeSnapshot) {
       conflicts.push(header + '（両行で値が競合）');
     }
   }
+
   if (conflicts.length) {
-    return { ok: false, reason: conflicts.slice(0, 8).join('、') + (conflicts.length > 8 ? ' ほか' + (conflicts.length - 8) + '件' : '') };
+    return {
+      ok: false,
+      reason: conflicts.slice(0, 8).join('、') + (conflicts.length > 8 ? ' ほか' + (conflicts.length - 8) + '件' : '')
+    };
   }
   return { ok: true, reason: '除外行にしかない情報・競合値なし' };
 }
@@ -387,7 +411,7 @@ function hotelDbV2Pr20ArchiveKey_(sheetId, row1, row2, keepRow, hash1, hash2) {
 function hotelDbV2Pr20AppendArchive_(sheet, candidate, snapshot1, snapshot2, keepRow, removeRow, archiveKey) {
   const keepSnapshot = keepRow === candidate.row1 ? snapshot1 : snapshot2;
   const removeSnapshot = removeRow === candidate.row1 ? snapshot1 : snapshot2;
-  const row = hotelDbV2RowFromObject_(HOTEL_DB_V2_PR20_ARCHIVE_HEADERS, {
+  const values = hotelDbV2RowFromObject_(HOTEL_DB_V2_PR20_ARCHIVE_HEADERS, {
     '整理キー': archiveKey, '処理状態': 'アーカイブ済み・整理前', 'アーカイブ日時': hotelDbV2Timestamp_(),
     '整理完了日時': '', '元シート': candidate.sheetName, '元シートID': candidate.sheetId, '重複キー': candidate.key,
     '行1': candidate.row1, '施設名1': candidate.name1, '住所1': candidate.address1, '行1ハッシュ': snapshot1.hash,
@@ -400,7 +424,7 @@ function hotelDbV2Pr20AppendArchive_(sheet, candidate, snapshot1, snapshot2, kee
     '情報損失チェック': '合格', '詳細': 'PR20承認重複整理。人が残す行を指定。物理行削除なし。'
   });
   const rowNumber = sheet.getLastRow() + 1;
-  sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
+  sheet.getRange(rowNumber, 1, 1, values.length).setValues([values]);
   SpreadsheetApp.flush();
   return rowNumber;
 }
@@ -411,7 +435,9 @@ function hotelDbV2Pr20VerifyArchive_(sheet, rowNumber, key, hash1, hash2, keepRo
   function value(header) { return hotelDbV2Clean_(row[map[header] - 1]); }
   if (value('整理キー') !== key) return { ok: false, reason: '整理キー不一致' };
   if (value('行1ハッシュ') !== hash1 || value('行2ハッシュ') !== hash2) return { ok: false, reason: '行ハッシュ不一致' };
-  if (Number(value('残す行')) !== Number(keepRow) || Number(value('除外行')) !== Number(removeRow)) return { ok: false, reason: '残す行・除外行不一致' };
+  if (Number(value('残す行')) !== Number(keepRow) || Number(value('除外行')) !== Number(removeRow)) {
+    return { ok: false, reason: '残す行・除外行不一致' };
+  }
   return { ok: true, reason: '' };
 }
 
@@ -419,7 +445,9 @@ function hotelDbV2Pr20FindArchive_(sheet, key) {
   if (!sheet || sheet.getLastRow() < 2) return null;
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getDisplayValues();
   for (let i = 0; i < values.length; i++) {
-    if (hotelDbV2Clean_(values[i][0]) === key) return { row: i + 2, state: hotelDbV2Clean_(values[i][1]) };
+    if (hotelDbV2Clean_(values[i][0]) === key) {
+      return { row: i + 2, state: hotelDbV2Clean_(values[i][1]) };
+    }
   }
   return null;
 }
@@ -427,7 +455,9 @@ function hotelDbV2Pr20FindArchive_(sheet, key) {
 function hotelDbV2Pr20FinalizeArchive_(sheet, rowNumber, state, detail) {
   const map = hotelDbV2HeaderIndex_(HOTEL_DB_V2_PR20_ARCHIVE_HEADERS);
   sheet.getRange(rowNumber, map['処理状態']).setValue(state);
-  if (state === HOTEL_DB_V2_PR20.APPLIED) sheet.getRange(rowNumber, map['整理完了日時']).setValue(hotelDbV2Timestamp_());
+  if (state === HOTEL_DB_V2_PR20.APPLIED) {
+    sheet.getRange(rowNumber, map['整理完了日時']).setValue(hotelDbV2Timestamp_());
+  }
   sheet.getRange(rowNumber, map['詳細']).setValue(detail || '');
 }
 
@@ -440,14 +470,18 @@ function hotelDbV2Pr20SetResult_(sheet, map, rowNumber, state, removeRow, archiv
 }
 
 function hotelDbV2Pr20Conflict_(sheet, map, rowNumber, reason) {
-  hotelDbV2Pr20SetResult_(sheet, map, rowNumber, HOTEL_DB_V2_PR20.CONFLICT, '', '', '未整理: ' + reason);
+  hotelDbV2Pr20SetResult_(
+    sheet, map, rowNumber, HOTEL_DB_V2_PR20.CONFLICT, '', '', '未整理: ' + reason
+  );
 }
 
 function hotelDbV2Pr20PrepareTriageSnapshot_(spreadsheet, duplicateSheet, rowNumber, map, decision) {
   const result = { created: 0, review: 0, approvalReset: 0 };
   if (!map['整理スナップショット状態']) return result;
 
-  function set(header, value) { if (map[header]) duplicateSheet.getRange(rowNumber, map[header]).setValue(value); }
+  function set(header, value) {
+    if (map[header]) duplicateSheet.getRange(rowNumber, map[header]).setValue(value);
+  }
   const row = duplicateSheet.getRange(rowNumber, 1, 1, duplicateSheet.getLastColumn()).getDisplayValues()[0];
   function value(header) { return map[header] ? hotelDbV2Clean_(row[map[header] - 1]) : ''; }
   const state = value('状態');
@@ -457,88 +491,100 @@ function hotelDbV2Pr20PrepareTriageSnapshot_(spreadsheet, duplicateSheet, rowNum
     return result;
   }
 
-  const sheetId = Number(value('元シートID'));
-  const row1 = Number(value('行1'));
-  const row2 = Number(value('行2'));
-  const sourceSheet = sheetId ? spreadsheet.getSheetById(sheetId) : null;
-  if (!sourceSheet || sourceSheet.getName() !== value('元シート') || row1 < 2 || row2 < 2 || row1 > sourceSheet.getLastRow() || row2 > sourceSheet.getLastRow()) {
+  try {
+    const sheetId = Number(value('元シートID'));
+    const row1 = Number(value('行1'));
+    const row2 = Number(value('行2'));
+    const sourceSheet = sheetId ? spreadsheet.getSheetById(sheetId) : null;
+    if (!sourceSheet || sourceSheet.getName() !== value('元シート') ||
+        row1 < 2 || row2 < 2 || row1 > sourceSheet.getLastRow() || row2 > sourceSheet.getLastRow()) {
+      throw new Error('元シートまたは行1/行2を確認できません。');
+    }
+
+    const sourceMap = hotelDbV2GetHeaderMap_(sourceSheet);
+    hotelDbV2ValidateSourceSheet_(sourceSheet, sourceMap);
+    const facility1 = hotelDbV2ReadFacility_(sourceSheet, row1, sourceMap);
+    const facility2 = hotelDbV2ReadFacility_(sourceSheet, row2, sourceMap);
+    const identity = hotelDbV2Pr20ValidatePairIdentity_({
+      name1: value('施設名1'), address1: value('住所1'),
+      name2: value('施設名2'), address2: value('住所2')
+    }, facility1, facility2);
+    if (!identity.ok) throw new Error(identity.reason);
+
+    const snapshot1 = hotelDbV2Pr19SnapshotRow_(sourceSheet, row1);
+    const snapshot2 = hotelDbV2Pr19SnapshotRow_(sourceSheet, row2);
+    const oldHash1 = value('行1ハッシュ');
+    const oldHash2 = value('行2ハッシュ');
+    const changed = (oldHash1 && oldHash1 !== snapshot1.hash) || (oldHash2 && oldHash2 !== snapshot2.hash);
+    const missingOld = !oldHash1 || !oldHash2;
+
+    if (state === HOTEL_DB_V2_PR20.APPLIED) return result;
+
+    set('整理候補作成日時', hotelDbV2Timestamp_());
+    set('行1ハッシュ', snapshot1.hash);
+    set('行2ハッシュ', snapshot2.hash);
+    set('整理スナップショット状態', HOTEL_DB_V2_PR20.SNAPSHOT_READY);
+    set('除外予定行', '');
+    set('整理処理日時', '');
+    set('整理履歴キー', '');
+
+    if (state === HOTEL_DB_V2_PR20.APPROVED && (changed || missingOld)) {
+      set('状態', HOTEL_DB_V2_PR20.CONFLICT);
+      set('整理結果', 'スナップショットが新規作成または更新されたため、内容を再確認して再承認してください。');
+      result.approvalReset++;
+    } else if (state !== HOTEL_DB_V2_PR20.CONFLICT) {
+      set('整理結果', '');
+    }
+    result.created++;
+    return result;
+  } catch (error) {
     set('整理スナップショット状態', HOTEL_DB_V2_PR20.SNAPSHOT_REVIEW);
-    set('整理結果', 'スナップショット未作成: 元シートまたは行1/行2を確認できません。');
+    set('整理結果', 'スナップショット未作成: ' + error.message);
     result.review++;
     return result;
   }
-
-  const sourceMap = hotelDbV2GetHeaderMap_(sourceSheet);
-  hotelDbV2ValidateSourceSheet_(sourceSheet, sourceMap);
-  const facility1 = hotelDbV2ReadFacility_(sourceSheet, row1, sourceMap);
-  const facility2 = hotelDbV2ReadFacility_(sourceSheet, row2, sourceMap);
-  const candidateForCheck = {
-    name1: value('施設名1'), address1: value('住所1'), name2: value('施設名2'), address2: value('住所2')
-  };
-  const identity = hotelDbV2Pr20ValidatePairIdentity_(candidateForCheck, facility1, facility2);
-  if (!identity.ok) {
-    set('整理スナップショット状態', HOTEL_DB_V2_PR20.SNAPSHOT_REVIEW);
-    set('整理結果', 'スナップショット未作成: ' + identity.reason);
-    result.review++;
-    return result;
-  }
-
-  const snapshot1 = hotelDbV2Pr19SnapshotRow_(sourceSheet, row1);
-  const snapshot2 = hotelDbV2Pr19SnapshotRow_(sourceSheet, row2);
-  const oldHash1 = value('行1ハッシュ');
-  const oldHash2 = value('行2ハッシュ');
-  const changed = (oldHash1 && oldHash1 !== snapshot1.hash) || (oldHash2 && oldHash2 !== snapshot2.hash);
-  const missingOld = !oldHash1 || !oldHash2;
-
-  if (state === HOTEL_DB_V2_PR20.APPLIED) return result;
-
-  set('整理候補作成日時', hotelDbV2Timestamp_());
-  set('行1ハッシュ', snapshot1.hash);
-  set('行2ハッシュ', snapshot2.hash);
-  set('整理スナップショット状態', HOTEL_DB_V2_PR20.SNAPSHOT_READY);
-  set('除外予定行', '');
-  set('整理処理日時', '');
-  set('整理履歴キー', '');
-
-  if (state === HOTEL_DB_V2_PR20.APPROVED && (changed || missingOld)) {
-    set('状態', HOTEL_DB_V2_PR20.CONFLICT);
-    set('整理結果', 'スナップショットが新規作成または更新されたため、内容を再確認して再承認してください。');
-    result.approvalReset++;
-  } else if (state !== HOTEL_DB_V2_PR20.CONFLICT) {
-    set('整理結果', '');
-  }
-  result.created++;
-  return result;
 }
 
 function hotelDbV2Pr20InvalidateLinkedCandidates_(spreadsheet, sheetId, sourceRow, currentDuplicateSheet, currentDuplicateRow) {
-  function invalidateByColumns(sheetName, idHeader, rowHeaders, completedStates, resultHeader) {
-    const sheet = spreadsheet.getSheetByName(sheetName);
-    if (!sheet || sheet.getLastRow() < 2) return;
-    const map = hotelDbV2Pr20HeaderMap_(sheet);
-    if (!map[idHeader] || !map['状態']) return;
-    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues();
-    values.forEach(function(row, offset) {
-      const rowNumber = offset + 2;
-      if (sheet === currentDuplicateSheet && rowNumber === currentDuplicateRow) return;
-      if (String(row[map[idHeader] - 1]) !== String(sheetId)) return;
-      const matchesRow = rowHeaders.some(function(header) {
-        return map[header] && Number(row[map[header] - 1]) === Number(sourceRow);
+  try {
+    function invalidateByColumns(sheetName, idHeader, rowHeaders, completedStates, auditResultHeader) {
+      const sheet = spreadsheet.getSheetByName(sheetName);
+      if (!sheet || sheet.getLastRow() < 2) return;
+      const map = hotelDbV2Pr20HeaderMap_(sheet);
+      if (!map[idHeader] || !map['状態']) return;
+      const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues();
+      values.forEach(function(row, offset) {
+        const rowNumber = offset + 2;
+        if (sheet === currentDuplicateSheet && rowNumber === currentDuplicateRow) return;
+        if (String(row[map[idHeader] - 1]) !== String(sheetId)) return;
+        const matchesRow = rowHeaders.some(function(header) {
+          return map[header] && Number(row[map[header] - 1]) === Number(sourceRow);
+        });
+        if (!matchesRow) return;
+        const state = hotelDbV2Clean_(row[map['状態'] - 1]);
+        if (completedStates.indexOf(state) !== -1) return;
+        sheet.getRange(rowNumber, map['状態']).setValue('要再確認');
+        if (auditResultHeader && map[auditResultHeader]) {
+          const currentText = hotelDbV2Clean_(row[map[auditResultHeader] - 1]);
+          const marker = '元施設がPR20で重複整理除外済みです。';
+          sheet.getRange(rowNumber, map[auditResultHeader]).setValue(
+            currentText ? currentText + '／' + marker : marker
+          );
+        }
       });
-      if (!matchesRow) return;
-      const state = hotelDbV2Clean_(row[map['状態'] - 1]);
-      if (completedStates.indexOf(state) !== -1) return;
-      sheet.getRange(rowNumber, map['状態']).setValue('要再確認');
-      if (resultHeader && map[resultHeader]) {
-        sheet.getRange(rowNumber, map[resultHeader]).setValue('元施設がPR20で重複整理除外済みです。');
-      }
-    });
-  }
+    }
 
-  invalidateByColumns(HOTEL_DB_V2_CONFIG.SHEETS.CORRECTIONS, '元シートID', ['元行'], ['反映済み'], '差分');
-  invalidateByColumns(HOTEL_DB_V2_CONFIG.SHEETS.REVIEW, '元シートID', ['元行'], ['除外済み'], '詳細');
-  invalidateByColumns(HOTEL_DB_V2_CONFIG.SHEETS.DUPLICATES, '元シートID', ['行1', '行2'], ['整理済み'], '整理結果');
-  if (typeof HOTEL_DB_V2_NEW_FACILITY_CLASSIFICATION !== 'undefined') {
-    invalidateByColumns(HOTEL_DB_V2_NEW_FACILITY_CLASSIFICATION.SHEET_NAME, '元シートID', ['元行'], ['反映済み'], '反映結果');
+    // 既存の差分・詳細は上書きしない。専用の結果列があるシートだけ追記する。
+    invalidateByColumns(HOTEL_DB_V2_CONFIG.SHEETS.CORRECTIONS, '元シートID', ['元行'], ['反映済み'], '');
+    invalidateByColumns(HOTEL_DB_V2_CONFIG.SHEETS.REVIEW, '元シートID', ['元行'], ['除外済み'], '');
+    invalidateByColumns(HOTEL_DB_V2_CONFIG.SHEETS.DUPLICATES, '元シートID', ['行1', '行2'], ['整理済み'], '整理結果');
+    if (typeof HOTEL_DB_V2_NEW_FACILITY_CLASSIFICATION !== 'undefined') {
+      invalidateByColumns(
+        HOTEL_DB_V2_NEW_FACILITY_CLASSIFICATION.SHEET_NAME,
+        '元シートID', ['元行'], ['反映済み'], '反映結果'
+      );
+    }
+  } catch (error) {
+    console.warn('PR20関連候補の要再確認化を一部省略: ' + error.message);
   }
 }
