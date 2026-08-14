@@ -296,7 +296,7 @@ function hotelDbV2NewFacilityClassificationUpsert_(sheet, map, index, data) {
 }
 
 function hotelDbV2NewFacilityClassificationRecommend_(googleTypes) {
-  const text = hotelDbV2NormalizeText_(googleTypes).toLowerCase();
+  const text = hotelDbV2Clean_(googleTypes).toLowerCase();
   if (!text) {
     return { reference: '要確認', reason: 'Googleタイプがありません。許可情報・公式情報で確認してください。', confidence: 40 };
   }
