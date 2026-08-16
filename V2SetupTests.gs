@@ -41,8 +41,8 @@ function runHotelDbV2SetupTests() {
   result = hotelDbV2SetupValidateApiKey_('  12345678901234567890  ');
   check('API-09 外側空白は除去して有効', result.valid === true);
   check('API-10 保存候補値はtrim済み', result.key === '12345678901234567890');
-  result = hotelDbV2SetupValidateApiKey_('AIzaSyExampleKey_1234567890123456789');
-  check('API-11 Google風キー文字列を許容', result.valid === true);
+  result = hotelDbV2SetupValidateApiKey_('example_key_1234567890123456789012345');
+  check('API-11 記号を含む十分な長さのキー文字列を許容', result.valid === true);
 
   // 2) Script Properties書込みの純粋テスト: 6項目
   const fakeStore = {
