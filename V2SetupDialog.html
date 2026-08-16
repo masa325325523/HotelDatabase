@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <style>
+    :root {
+      --navy: #163a59;
+      --navy2: #234f70;
+      --bg: #f4f7fa;
+      --card: #ffffff;
+      --line: #d8e0e7;
+      --text: #1f2933;
+      --muted: #667788;
+      --ok: #176b3a;
+      --warn: #8a5a00;
+      --bad: #a12622;
+      --blue: #1769aa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .header {
+      background: var(--navy);
+      color: #fff;
+      padding: 18px 22px 16px;
+    }
+    .header h1 { margin: 0; font-size: 22px; }
+    .header p { margin: 7px 0 0; font-size: 13px; opacity: .9; }
+    .wrap { padding: 16px 20px 22px; }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 10px 11px;
+      min-height: 72px;
+    }
+    .metric .label { font-size: 11px; color: var(--muted); margin-bottom: 7px; }
+    .metric .value { font-size: 14px; font-weight: 700; line-height: 1.35; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 15px;
+      margin-bottom: 12px;
+    }
+    .card h2 { margin: 0 0 9px; font-size: 16px; color: var(--navy); }
+    .note { font-size: 12px; color: var(--muted); line-height: 1.55; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    input[type="password"] {
+      flex: 1;
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid #b9c5cf;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    button.primary { background: var(--blue); color: #fff; }
+    button.secondary { background: #e8eef3; color: #243746; }
+    button.danger { background: #fff1f0; color: var(--bad); border: 1px solid #efc3c0; }
+    button:disabled { opacity: .55; cursor: default; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .message {
+      display: none;
+      margin: 10px 0 0;
+      padding: 9px 10px;
+      border-radius: 6px;
+      background: #eef5fb;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .message.error { background: #fff0ef; color: var(--bad); }
+    .message.success { background: #edf8f1; color: var(--ok); }
+    .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    ul { margin: 6px 0 0 19px; padding: 0; }
+    li { margin: 4px 0; font-size: 12px; line-height: 1.45; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-bottom: 1px solid #e4e9ee; padding: 7px 6px; text-align: left; }
+    th { background: #f4f7fa; color: #465a69; }
+    .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+    .spinner { display: none; color: var(--muted); font-size: 12px; }
+    @media (max-width: 680px) {
+      .summary { grid-template-columns: 1fr 1fr; }
+      .lists { grid-template-columns: 1fr; }
+      .row { align-items: stretch; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>宿泊施設DB Ver2.0　初期セットアップ・設定</h1>
+    <p>APIキー・元データ・運用シートの準備状態を安全に確認します。</p>
+  </div>
+
+  <div class="wrap">
+    <div class="summary">
+      <div class="metric"><div class="label">APIキー</div><div id="apiMetric" class="value">確認中</div></div>
+      <div class="metric"><div class="label">元データ</div><div id="sourceMetric" class="value">確認中</div></div>
+      <div class="metric"><div class="label">コア運用シート</div><div id="coreMetric" class="value">確認中</div></div>
+      <div class="metric"><div class="label">セットアップ</div><div id="readyMetric" class="value">確認中</div></div>
+    </div>
+
+    <div class="card">
+      <h2>1. Google Places APIキー</h2>
+      <div class="note">
+        APIキーは Script Properties の <b>GOOGLE_PLACES_API_KEY</b> にだけ保存します。保存済みキーはこの画面へ再表示しません。
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="新しく設定・変更する場合だけ入力">
+        <button class="primary" onclick="saveKey()">保存</button>
+        <button class="danger" onclick="deleteKey()">削除</button>
+      </div>
+      <div class="actions">
+        <button class="secondary" onclick="testConnection()">接続テスト</button>
+      </div>
+      <div id="apiMessage" class="message"></div>
+    </div>
+
+    <div class="card">
+      <h2>2. 元データシート</h2>
+      <div id="sourceName" class="note">確認中</div>
+      <div class="lists">
+        <div>
+          <b style="font-size:12px;">要対応</b>
+          <ul id="sourceIssues"></ul>
+        </div>
+        <div>
+          <b style="font-size:12px;">推奨</b>
+          <ul id="sourceWarnings"></ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3. コア運用シート</h2>
+      <div class="note">不足シートだけを新規作成します。既存シートの見出し・値・数式は自動修正しません。</div>
+      <table style="margin-top:9px;">
+        <thead><tr><th>シート</th><th>状態</th><th>データ行</th></tr></thead>
+        <tbody id="coreRows"></tbody>
+      </table>
+      <div class="actions">
+        <button class="primary" onclick="prepareSheets()">運用シートを準備</button>
+      </div>
+      <div id="sheetMessage" class="message"></div>
+    </div>
+
+    <div class="card">
+      <h2>次にやること</h2>
+      <ol id="nextActions" style="margin:0 0 0 21px; padding:0;"></ol>
+    </div>
+
+    <div class="footer">
+      <div id="spinner" class="spinner">処理中...</div>
+      <div class="actions" style="margin:0;">
+        <button class="secondary" onclick="refreshStatus()">状態を再読み込み</button>
+        <button class="secondary" onclick="google.script.host.close()">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let busyCount = 0;
+
+    function setBusy(on) {
+      busyCount += on ? 1 : -1;
+      if (busyCount < 0) busyCount = 0;
+      document.getElementById('spinner').style.display = busyCount ? 'block' : 'none';
+    }
+
+    function runServer(name, args, success, failure) {
+      setBusy(true);
+      const runner = google.script.run
+        .withSuccessHandler(function(result) {
+          setBusy(false);
+          if (success) success(result);
+        })
+        .withFailureHandler(function(error) {
+          setBusy(false);
+          const message = error && error.message ? error.message : String(error || '不明なエラー');
+          if (failure) failure(message);
+          else showMessage('apiMessage', message, true);
+        });
+
+      if (args && args.length) runner[name].apply(runner, args);
+      else runner[name]();
+    }
+
+    function showMessage(id, text, isError, isSuccess) {
+      const box = document.getElementById(id);
+      box.textContent = text || '';
+      box.className = 'message' + (isError ? ' error' : (isSuccess ? ' success' : ''));
+      box.style.display = text ? 'block' : 'none';
+    }
+
+    function setMetric(id, text, state) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = 'value ' + (state || '');
+    }
+
+    function renderStatus(status) {
+      const data = status || {};
+      setMetric('apiMetric', data.apiKeyConfigured ? '設定済み' : '未設定', data.apiKeyConfigured ? 'ok' : 'bad');
+
+      const source = data.source || {};
+      setMetric('sourceMetric', source.ready ? '使用可能' : '要確認', source.ready ? 'ok' : 'warn');
+
+      const missing = Number(data.coreMissing || 0);
+      const review = Number(data.coreNeedsReview || 0);
+      const coreText = review ? ('要確認 ' + review + '件') : (missing ? ('未作成 ' + missing + '件') : '準備済み');
+      setMetric('coreMetric', coreText, review ? 'bad' : (missing ? 'warn' : 'ok'));
+      setMetric('readyMetric', data.setupReady ? '準備完了' : '未完了', data.setupReady ? 'ok' : 'warn');
+
+      document.getElementById('sourceName').textContent = '現在のシート: ' + (source.name || '取得不可') +
+        ' / 認識列: ' + ((source.recognized || []).join(', ') || 'なし');
+      renderList('sourceIssues', source.issues || [], '問題なし');
+      renderList('sourceWarnings', source.warnings || [], '特になし');
+
+      const tbody = document.getElementById('coreRows');
+      tbody.textContent = '';
+      (data.coreSheets || []).forEach(function(item) {
+        const tr = document.createElement('tr');
+        [item.name || '', item.status || '', String(item.rows || 0)].forEach(function(value) {
+          const td = document.createElement('td');
+          td.textContent = value;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+
+      const actions = document.getElementById('nextActions');
+      actions.textContent = '';
+      (data.nextActions || []).forEach(function(text) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        actions.appendChild(li);
+      });
+      if (!(data.nextActions || []).length) {
+        const li = document.createElement('li');
+        li.textContent = '追加の対応はありません。';
+        actions.appendChild(li);
+      }
+    }
+
+    function renderList(id, items, emptyText) {
+      const list = document.getElementById(id);
+      list.textContent = '';
+      const values = items && items.length ? items : [emptyText];
+      values.forEach(function(text) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        list.appendChild(li);
+      });
+    }
+
+    function refreshStatus() {
+      runServer('hotelDbV2SetupGetStatus', [], renderStatus, function(message) {
+        showMessage('apiMessage', message, true);
+      });
+    }
+
+    function saveKey() {
+      const input = document.getElementById('apiKey');
+      const key = input.value;
+      if (!key.trim()) {
+        showMessage('apiMessage', '新しく設定・変更するAPIキーを入力してください。', true);
+        return;
+      }
+      showMessage('apiMessage', '', false);
+      runServer('hotelDbV2SetupSaveApiKey', [key], function(result) {
+        input.value = '';
+        renderStatus(result.status);
+        showMessage('apiMessage', 'APIキーをScript Propertiesへ保存しました。保存済みキーは画面へ再表示しません。', false, true);
+      }, function(message) {
+        showMessage('apiMessage', message, true);
+      });
+    }
+
+    function deleteKey() {
+      if (!confirm('保存済みのGoogle Places APIキーをScript Propertiesから削除します。よろしいですか？')) return;
+      runServer('hotelDbV2SetupDeleteApiKey', [], function(result) {
+        document.getElementById('apiKey').value = '';
+        renderStatus(result.status);
+        showMessage('apiMessage', '保存済みAPIキーを削除しました。', false, true);
+      }, function(message) {
+        showMessage('apiMessage', message, true);
+      });
+    }
+
+    function testConnection() {
+      showMessage('apiMessage', 'Google Places APIへ接続しています...', false);
+      runServer('hotelDbV2SetupTestConnection', [], function(result) {
+        if (result.ok) {
+          showMessage('apiMessage', result.message + '\n確認施設: ' + result.name + '\n住所: ' + result.address + '\n営業状態: ' + result.status, false, true);
+        } else {
+          showMessage('apiMessage', result.message, true);
+        }
+      }, function(message) {
+        showMessage('apiMessage', message, true);
+      });
+    }
+
+    function prepareSheets() {
+      runServer('hotelDbV2SetupPrepareCoreSheets', [], function(result) {
+        renderStatus(result.status);
+        const created = result.created || [];
+        const text = created.length
+          ? ('新規作成: ' + created.join('、') + '\n既存シートは変更していません。')
+          : '不足しているコアシートはありません。既存シートは変更していません。';
+        showMessage('sheetMessage', text, false, true);
+      }, function(message) {
+        showMessage('sheetMessage', message, true);
+      });
+    }
+
+    refreshStatus();
+  </script>
+</body>
+</html>
