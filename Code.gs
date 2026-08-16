@@ -30,6 +30,7 @@ function onOpen() {
     .addItem('⑯ 承認済み宿泊分類・備考を安全に反映', 'runHotelDbV2ApplyApprovedNewFacilityClassifications')
     .addItem('⑰ 承認済み閉業候補を安全に除外', 'runHotelDbV2ApplyApprovedClosedFacilityRemovals')
     .addItem('⑱ 承認済み重複候補を安全に整理', 'runHotelDbV2ApplyApprovedDuplicateConsolidations')
+    .addItem('⑲ 統合ダッシュボードを更新', 'runHotelDbV2RefreshDashboard')
     .addToUi();
 }
 
