@@ -27,7 +27,11 @@ function setupHotelDbV2SetupUiTest() {
   hotelDbV2Pr22AssertCopy_(spreadsheet);
 
   const properties = PropertiesService.getDocumentProperties();
-  properties.deleteProperty(HOTEL_DB_V2_PR22_UI_TEST.STATE_PROPERTY);
+  if (properties.getProperty(HOTEL_DB_V2_PR22_UI_TEST.STATE_PROPERTY)) {
+    throw new Error(
+      '前回のPR #22 UIテスト状態が残っています。先に cleanupHotelDbV2SetupUiTest() を実行してください。'
+    );
+  }
 
   const originalActive = spreadsheet.getActiveSheet();
   const sourceSheet = hotelDbV2Pr22FindSourceSheet_(spreadsheet);
@@ -267,13 +271,11 @@ function hotelDbV2Pr22AssertCopy_(spreadsheet) {
 function hotelDbV2Pr22FindSourceSheet_(spreadsheet) {
   const reserved = hotelDbV2SetupReservedSheetNames_();
   const sheets = spreadsheet.getSheets();
-
   for (let i = 0; i < sheets.length; i++) {
     const sheet = sheets[i];
     if (reserved.indexOf(sheet.getName()) !== -1) continue;
-    const map = hotelDbV2GetHeaderMap_(sheet);
     const evaluation = hotelDbV2SetupEvaluateSourceMap_(
-      sheet.getName(), map, reserved
+      sheet.getName(), hotelDbV2GetHeaderMap_(sheet), reserved
     );
     if (evaluation.ready) return sheet;
   }
@@ -296,12 +298,11 @@ function hotelDbV2Pr22SheetHash_(sheet) {
   const lastRow = Math.max(1, sheet.getLastRow());
   const lastColumn = Math.max(1, sheet.getLastColumn());
   const range = sheet.getRange(1, 1, lastRow, lastColumn);
-  const payload = JSON.stringify({
+  return hotelDbV2Pr22Sha256_(JSON.stringify({
     name: sheet.getName(),
     values: range.getDisplayValues(),
     formulas: range.getFormulas()
-  });
-  return hotelDbV2Pr22Sha256_(payload);
+  }));
 }
 
 function hotelDbV2Pr22ApiKeyHash_() {
@@ -319,7 +320,7 @@ function hotelDbV2Pr22Sha256_(value) {
     Utilities.Charset.UTF_8
   );
   return digest.map(function(byte) {
-    const value = byte < 0 ? byte + 256 : byte;
-    return ('0' + value.toString(16)).slice(-2);
+    const normalized = byte < 0 ? byte + 256 : byte;
+    return ('0' + normalized.toString(16)).slice(-2);
   }).join('');
 }
