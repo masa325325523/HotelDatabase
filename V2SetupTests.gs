@@ -239,6 +239,7 @@ function runHotelDbV2SetupTests() {
   check('SAFE-04 HTMLファイル名固定', HOTEL_DB_V2_SETUP.DIALOG_FILE === 'V2SetupDialog');
   check('SAFE-05 ダッシュボード名固定', HOTEL_DB_V2_SETUP.DASHBOARD_SHEET === '統合ダッシュボード');
 
+  // 11 + 6 + 15 + 11 + 8 + 10 + 12 + 5 = 78
   const expectedCount = 78;
   if (passed + failures.length !== expectedCount) {
     failures.push(
