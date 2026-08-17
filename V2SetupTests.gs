@@ -206,7 +206,7 @@ function runHotelDbV2SetupTests() {
   check('NEXT-09 コア不足時は③案内なし', !hasText(result, '③'));
   check('NEXT-10 コア不足でも接続テスト案内あり', hasText(result, '接続テスト'));
 
-  // 7) コアシート定義: 11項目
+  // 7) コアシート定義: 12項目
   const definitions = hotelDbV2SetupCoreSheetDefinitions_();
   check('DEF-01 コアシートは5種類', definitions.length === 5);
   check(
@@ -239,7 +239,7 @@ function runHotelDbV2SetupTests() {
   check('SAFE-04 HTMLファイル名固定', HOTEL_DB_V2_SETUP.DIALOG_FILE === 'V2SetupDialog');
   check('SAFE-05 ダッシュボード名固定', HOTEL_DB_V2_SETUP.DASHBOARD_SHEET === '統合ダッシュボード');
 
-  const expectedCount = 77;
+  const expectedCount = 78;
   if (passed + failures.length !== expectedCount) {
     failures.push(
       'TEST-COUNT 自己診断定義数が期待値と不一致: actual=' +
