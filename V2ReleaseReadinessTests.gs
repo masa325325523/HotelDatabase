@@ -25,7 +25,7 @@ function runHotelDbV2ReleaseReadinessTests() {
   check('ENV-04 recovery', hotelDbV2ReleaseEnvironment_('【復元候補】宿泊施設DB').kind === 'test');
   check('ENV-05 backup', hotelDbV2ReleaseEnvironment_('【宿泊施設DBバックアップ】本番').kind === 'test');
   check('ENV-06 label production', hotelDbV2ReleaseEnvironment_('宿泊施設DB 本番').label === '製品候補');
-  check('ENV-07 label test', hotelDbV2ReleaseEnvironment_('fooTEST').label === 'テスト環境');
+  check('ENV-07 label test', hotelDbV2ReleaseEnvironment_('全国宿泊施設 作業中').label === 'テスト環境');
 
   let summary = hotelDbV2ReleaseSummarize_([{severity:'ok', blocking:false},{severity:'info', blocking:false}], {kind:'production'});
   check('SUM-01 ready', summary.releaseReady === true);
