@@ -53,9 +53,16 @@ function hotelDbV2HealthCheckBuildReport_(spreadsheet) {
   const checks = [];
 
   function add(section, id, label, severity, detail) {
-    checks.push({ section:section, id:id, label:label, severity:severity, detail:detail || '' });
+    checks.push({
+      section: section,
+      id: id,
+      label: label,
+      severity: severity,
+      detail: detail || ''
+    });
   }
 
+  // 1. 基本セットアップ状態
   let setupStatus = null;
   if (typeof hotelDbV2SetupBuildStatus_ === 'function') {
     setupStatus = hotelDbV2SetupBuildStatus_(spreadsheet);
@@ -66,60 +73,97 @@ function hotelDbV2HealthCheckBuildReport_(spreadsheet) {
         ? '設定済み。保存済みキー本体はヘルスチェック結果へ返しません。'
         : '未設定です。「⚙ 初期セットアップ・設定」から設定してください。'
     );
+
     if (setupStatus.source && setupStatus.source.ready) {
-      add('セットアップ', 'SETUP-SOURCE', '元データシート', 'ok', '使用可能: ' + setupStatus.source.name);
+      add(
+        'セットアップ', 'SETUP-SOURCE', '元データシート', 'ok',
+        '使用可能: ' + setupStatus.source.name
+      );
     } else {
-      const sourceName = setupStatus.source && setupStatus.source.name ? setupStatus.source.name : '取得不可';
+      const sourceName = setupStatus.source && setupStatus.source.name
+        ? setupStatus.source.name
+        : '取得不可';
       const issueText = setupStatus.source && setupStatus.source.issues
         ? setupStatus.source.issues.join(' / ')
         : '元データシートを開いて再確認してください。';
-      add('セットアップ', 'SETUP-SOURCE', '元データシート', 'info', '現在のシート: ' + sourceName + '。' + issueText);
+      add(
+        'セットアップ', 'SETUP-SOURCE', '元データシート', 'info',
+        '現在のシート: ' + sourceName + '。' + issueText
+      );
     }
+
     (setupStatus.coreSheets || []).forEach(function(item) {
       add(
         '運用シート', 'CORE-' + item.name, item.name,
         !item.exists || !item.compatible ? 'critical' : 'ok',
-        !item.exists ? '未作成です。' : (item.compatible ? '見出し互換・準備済み。' : '見出しが期待仕様と一致しません。')
+        !item.exists
+          ? '未作成です。'
+          : (item.compatible ? '見出し互換・準備済み。' : '見出しが期待仕様と一致しません。')
       );
     });
   } else {
-    add('セットアップ', 'SETUP-MODULE', '初期セットアップモジュール', 'critical', 'hotelDbV2SetupBuildStatus_ が見つかりません。');
+    add(
+      'セットアップ', 'SETUP-MODULE', '初期セットアップモジュール', 'critical',
+      'hotelDbV2SetupBuildStatus_ が見つかりません。'
+    );
   }
 
+  // 2. 安全設定
   const configExists = typeof HOTEL_DB_V2_CONFIG !== 'undefined' && Boolean(HOTEL_DB_V2_CONFIG);
   add('安全設定', 'CFG-EXISTS', 'Ver2.0設定', configExists ? 'ok' : 'critical',
       configExists ? '設定オブジェクトを確認しました。' : 'HOTEL_DB_V2_CONFIG が見つかりません。');
+
   if (configExists) {
     hotelDbV2HealthCheckConfigChecks_().forEach(function(item) {
       add('安全設定', item.id, item.label, item.ok ? 'ok' : 'critical', item.detail);
     });
   }
 
+  // 3. 製品メニュー / 実行入口
   hotelDbV2HealthCheckEntryPoints_().forEach(function(item) {
-    add('機能入口', item.id, item.label, item.exists ? 'ok' : 'critical',
-        item.exists ? '実行入口を確認しました。' : '実行関数が見つかりません。');
+    add(
+      '機能入口', item.id, item.label,
+      item.exists ? 'ok' : 'critical',
+      item.exists ? '実行入口を確認しました。' : '実行関数が見つかりません。'
+    );
   });
 
+  // 4. 安全回帰テストの入口（実行はしない。ヘルスチェック中にUIや一時シートを発生させないため）
   hotelDbV2HealthCheckRegressionSuites_().forEach(function(item) {
-    add('安全回帰', item.id, item.label, item.exists ? 'ok' : 'warning',
-        item.exists ? '個別自己診断スイートを利用できます。ヘルスチェック中は自動実行しません。' : '個別自己診断スイートが見つかりません。');
+    add(
+      '安全回帰', item.id, item.label,
+      item.exists ? 'ok' : 'warning',
+      item.exists
+        ? '個別自己診断スイートを利用できます。ヘルスチェック中は自動実行しません。'
+        : '個別自己診断スイートが見つかりません。'
+    );
   });
 
+  // 5. オンデマンド生成される追加シート
   HOTEL_DB_V2_HEALTH.OPTIONAL_SHEETS.forEach(function(name) {
     const sheet = spreadsheet.getSheetByName(name);
-    add('運用シート', 'OPTIONAL-' + name, name, sheet ? 'ok' : 'info',
-        sheet ? '存在を確認しました。' : '未作成です。必要な機能を実行したときに作成できます。');
+    add(
+      '運用シート', 'OPTIONAL-' + name, name,
+      sheet ? 'ok' : 'info',
+      sheet ? '存在を確認しました。' : '未作成です。必要な機能を実行したときに作成できます。'
+    );
   });
 
-  add('監査・保護', 'SAFE-NO-API', '外部API自動呼び出し', 'ok',
-      'Google Places APIは自動では呼びません。接続確認は設定画面の「接続テスト」で明示実行します。');
-  add('監査・保護', 'SAFE-API-KEY', 'APIキー非露出', 'ok',
-      '結果オブジェクトには設定済み/未設定のみを含め、キー本体・ハッシュは返しません。');
+  // 6. ヘルスチェック自体の安全契約
+  add(
+    '監査・保護', 'SAFE-NO-API', '外部API自動呼び出し', 'ok',
+    'Google Places APIは自動では呼びません。接続確認は設定画面の「接続テスト」で明示実行します。'
+  );
+  add(
+    '監査・保護', 'SAFE-API-KEY', 'APIキー非露出', 'ok',
+    '結果オブジェクトには設定済み/未設定のみを含め、キー本体・ハッシュは返しません。'
+  );
 
   const after = hotelDbV2HealthCheckSnapshot_(spreadsheet);
   const unchanged = hotelDbV2HealthCheckSnapshotsEqual_(before, after);
   add(
-    '監査・保護', 'SAFE-UNCHANGED', '診断前後のデータ不変', unchanged ? 'ok' : 'critical',
+    '監査・保護', 'SAFE-UNCHANGED', '診断前後のデータ不変',
+    unchanged ? 'ok' : 'critical',
     unchanged
       ? '運用シート内容・数式とScript PropertiesのAPIキー指紋は診断前後で一致しました。'
       : '診断中に保護対象の状態変化を検出しました。別処理の同時実行有無も確認してください。'
@@ -127,6 +171,7 @@ function hotelDbV2HealthCheckBuildReport_(spreadsheet) {
 
   const summary = hotelDbV2HealthCheckSummarize_(checks);
   const recommendations = hotelDbV2HealthCheckRecommendations_(checks);
+
   return {
     version: HOTEL_DB_V2_HEALTH.VERSION,
     checkedAt: Utilities.formatDate(new Date(), HOTEL_DB_V2_CONFIG.TIMEZONE || 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss'),
@@ -147,14 +192,46 @@ function hotelDbV2HealthCheckBuildReport_(spreadsheet) {
 
 function hotelDbV2HealthCheckConfigChecks_() {
   return [
-    { id:'CFG-API-PROP', label:'APIキー保存先', ok:HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY === 'GOOGLE_PLACES_API_KEY', detail:'GOOGLE_PLACES_API_KEY のみを使用します。' },
-    { id:'CFG-AUTO-SCORE', label:'自動採用しきい値', ok:Number(HOTEL_DB_V2_CONFIG.AUTO_ACCEPT_SCORE) === 75, detail:'安全基準: 75点。現在=' + HOTEL_DB_V2_CONFIG.AUTO_ACCEPT_SCORE },
-    { id:'CFG-MIN-SCORE', label:'最低一致スコア', ok:Number(HOTEL_DB_V2_CONFIG.MIN_MATCH_SCORE) === 55, detail:'安全基準: 55点。現在=' + HOTEL_DB_V2_CONFIG.MIN_MATCH_SCORE },
-    { id:'CFG-BATCH', label:'本番バッチ件数', ok:Number(HOTEL_DB_V2_CONFIG.BATCH_SIZE) === 50, detail:'安全基準: 50件。現在=' + HOTEL_DB_V2_CONFIG.BATCH_SIZE },
-    { id:'CFG-TEST', label:'先頭テスト件数', ok:Number(HOTEL_DB_V2_CONFIG.TEST_ROWS) === 3, detail:'安全基準: 3件。現在=' + HOTEL_DB_V2_CONFIG.TEST_ROWS },
-    { id:'CFG-LANGUAGE', label:'Google Places言語', ok:HOTEL_DB_V2_CONFIG.LANGUAGE_CODE === 'ja', detail:'期待値: ja。現在=' + HOTEL_DB_V2_CONFIG.LANGUAGE_CODE },
-    { id:'CFG-REGION', label:'Google Places地域', ok:HOTEL_DB_V2_CONFIG.REGION_CODE === 'JP', detail:'期待値: JP。現在=' + HOTEL_DB_V2_CONFIG.REGION_CODE },
-    { id:'CFG-TIMEZONE', label:'タイムゾーン', ok:HOTEL_DB_V2_CONFIG.TIMEZONE === 'Asia/Tokyo', detail:'期待値: Asia/Tokyo。現在=' + HOTEL_DB_V2_CONFIG.TIMEZONE }
+    {
+      id: 'CFG-API-PROP', label: 'APIキー保存先',
+      ok: HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY === 'GOOGLE_PLACES_API_KEY',
+      detail: 'GOOGLE_PLACES_API_KEY のみを使用します。'
+    },
+    {
+      id: 'CFG-AUTO-SCORE', label: '自動採用しきい値',
+      ok: Number(HOTEL_DB_V2_CONFIG.AUTO_ACCEPT_SCORE) === 75,
+      detail: '安全基準: 75点。現在=' + HOTEL_DB_V2_CONFIG.AUTO_ACCEPT_SCORE
+    },
+    {
+      id: 'CFG-MIN-SCORE', label: '最低一致スコア',
+      ok: Number(HOTEL_DB_V2_CONFIG.MIN_MATCH_SCORE) === 55,
+      detail: '安全基準: 55点。現在=' + HOTEL_DB_V2_CONFIG.MIN_MATCH_SCORE
+    },
+    {
+      id: 'CFG-BATCH', label: '本番バッチ件数',
+      ok: Number(HOTEL_DB_V2_CONFIG.BATCH_SIZE) === 50,
+      detail: '安全基準: 50件。現在=' + HOTEL_DB_V2_CONFIG.BATCH_SIZE
+    },
+    {
+      id: 'CFG-TEST', label: '先頭テスト件数',
+      ok: Number(HOTEL_DB_V2_CONFIG.TEST_ROWS) === 3,
+      detail: '安全基準: 3件。現在=' + HOTEL_DB_V2_CONFIG.TEST_ROWS
+    },
+    {
+      id: 'CFG-LANGUAGE', label: 'Google Places言語',
+      ok: HOTEL_DB_V2_CONFIG.LANGUAGE_CODE === 'ja',
+      detail: '期待値: ja。現在=' + HOTEL_DB_V2_CONFIG.LANGUAGE_CODE
+    },
+    {
+      id: 'CFG-REGION', label: 'Google Places地域',
+      ok: HOTEL_DB_V2_CONFIG.REGION_CODE === 'JP',
+      detail: '期待値: JP。現在=' + HOTEL_DB_V2_CONFIG.REGION_CODE
+    },
+    {
+      id: 'CFG-TIMEZONE', label: 'タイムゾーン',
+      ok: HOTEL_DB_V2_CONFIG.TIMEZONE === 'Asia/Tokyo',
+      detail: '期待値: Asia/Tokyo。現在=' + HOTEL_DB_V2_CONFIG.TIMEZONE
+    }
   ];
 }
 
@@ -162,7 +239,6 @@ function hotelDbV2HealthCheckEntryPoints_() {
   return [
     { id:'ENTRY-SETUP', label:'⚙ 初期セットアップ・設定', exists: typeof runHotelDbV2OpenSetup === 'function' },
     { id:'ENTRY-HEALTH', label:'🩺 製品全体ヘルスチェック', exists: typeof runHotelDbV2HealthCheck === 'function' },
-    { id:'ENTRY-BACKUP', label:'💾 バックアップ・復元', exists: typeof runHotelDbV2OpenBackupRestore === 'function' },
     { id:'ENTRY-01', label:'① 設定・見出し診断', exists: typeof runHotelDbV2Diagnosis === 'function' },
     { id:'ENTRY-02', label:'② API接続テスト', exists: typeof runHotelDbV2ConnectionTest === 'function' },
     { id:'ENTRY-03', label:'③ 先頭3件テスト', exists: typeof runHotelDbV2Test3 === 'function' },
@@ -193,8 +269,7 @@ function hotelDbV2HealthCheckRegressionSuites_() {
     { id:'REG-19', label:'PR #19 閉業除外安全テスト', exists: typeof runHotelDbV2ApprovedClosedFacilityRemovalTests === 'function' },
     { id:'REG-20', label:'PR #20 重複整理安全テスト', exists: typeof runHotelDbV2ApprovedDuplicateConsolidationTests === 'function' },
     { id:'REG-21', label:'PR #21 ダッシュボード自己診断', exists: typeof runHotelDbV2DashboardTests === 'function' },
-    { id:'REG-22', label:'PR #22 セットアップ自己診断', exists: typeof runHotelDbV2SetupTests === 'function' },
-    { id:'REG-24', label:'PR #24 バックアップ・復元自己診断', exists: typeof runHotelDbV2BackupRestoreTests === 'function' }
+    { id:'REG-22', label:'PR #22 セットアップ自己診断', exists: typeof runHotelDbV2SetupTests === 'function' }
   ];
 }
 
@@ -205,14 +280,22 @@ function hotelDbV2HealthCheckSummarize_(checks) {
     counts[key]++;
     counts.total++;
   });
-  const overall = counts.critical > 0 ? '重大' : (counts.warning > 0 ? '要確認' : '正常');
-  return { overall:overall, counts:counts };
+  const overall = counts.critical > 0
+    ? '重大'
+    : (counts.warning > 0 ? '要確認' : '正常');
+  return { overall: overall, counts: counts };
 }
 
 function hotelDbV2HealthCheckRecommendations_(checks) {
-  const items = (checks || []).filter(function(item) { return item.severity === 'critical' || item.severity === 'warning'; });
+  const items = (checks || []).filter(function(item) {
+    return item.severity === 'critical' || item.severity === 'warning';
+  });
   return items.slice(0, 8).map(function(item) {
-    return { severity:item.severity, label:item.label, action:hotelDbV2HealthCheckActionFor_(item.id, item.detail) };
+    return {
+      severity: item.severity,
+      label: item.label,
+      action: hotelDbV2HealthCheckActionFor_(item.id, item.detail)
+    };
   });
 }
 
@@ -229,7 +312,10 @@ function hotelDbV2HealthCheckActionFor_(id, detail) {
 function hotelDbV2HealthCheckGroupSections_(checks) {
   const order = ['セットアップ', '安全設定', '機能入口', '運用シート', '安全回帰', '監査・保護'];
   return order.map(function(name) {
-    return { name:name, items:(checks || []).filter(function(item) { return item.section === name; }) };
+    return {
+      name: name,
+      items: (checks || []).filter(function(item) { return item.section === name; })
+    };
   }).filter(function(section) { return section.items.length > 0; });
 }
 
@@ -238,21 +324,34 @@ function hotelDbV2HealthCheckSnapshot_(spreadsheet) {
   const sheetHashes = {};
   names.forEach(function(name) {
     const sheet = spreadsheet.getSheetByName(name);
-    if (!sheet) { sheetHashes[name] = null; return; }
+    if (!sheet) {
+      sheetHashes[name] = null;
+      return;
+    }
     sheetHashes[name] = hotelDbV2HealthCheckHashSheet_(sheet);
   });
-  const apiKey = PropertiesService.getScriptProperties().getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY) || '';
-  return { spreadsheetId:spreadsheet.getId(), sheetHashes:sheetHashes, apiKeyFingerprint:hotelDbV2HealthCheckDigest_(String(apiKey)) };
+
+  const apiKey = PropertiesService.getScriptProperties()
+    .getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY) || '';
+
+  return {
+    spreadsheetId: spreadsheet.getId(),
+    sheetHashes: sheetHashes,
+    apiKeyFingerprint: hotelDbV2HealthCheckDigest_(String(apiKey))
+  };
 }
 
 function hotelDbV2HealthCheckProtectedSheetNames_() {
   const names = [];
   if (typeof hotelDbV2SetupReservedSheetNames_ === 'function') {
-    hotelDbV2SetupReservedSheetNames_().forEach(function(name) { if (names.indexOf(name) === -1) names.push(name); });
+    hotelDbV2SetupReservedSheetNames_().forEach(function(name) {
+      if (names.indexOf(name) === -1) names.push(name);
+    });
   } else {
     [
       '修正候補', '要確認', '修正履歴', '重複候補', '実行サマリー',
-      '新規追加候補', '新規施設分類候補', '閉業除外履歴', '重複整理履歴', '統合ダッシュボード'
+      '新規追加候補', '新規施設分類候補', '閉業除外履歴', '重複整理履歴',
+      '統合ダッシュボード'
     ].forEach(function(name) { names.push(name); });
   }
   return names;
@@ -262,17 +361,26 @@ function hotelDbV2HealthCheckHashSheet_(sheet) {
   const lastRow = sheet.getLastRow();
   const lastColumn = sheet.getLastColumn();
   if (lastRow < 1 || lastColumn < 1) {
-    return hotelDbV2HealthCheckDigest_(JSON.stringify({ id:sheet.getSheetId(), rows:lastRow, columns:lastColumn, values:[], formulas:[] }));
+    return hotelDbV2HealthCheckDigest_(JSON.stringify({
+      id: sheet.getSheetId(), rows: lastRow, columns: lastColumn, values: [], formulas: []
+    }));
   }
   const range = sheet.getRange(1, 1, lastRow, lastColumn);
   return hotelDbV2HealthCheckDigest_(JSON.stringify({
-    id:sheet.getSheetId(), rows:lastRow, columns:lastColumn,
-    values:range.getDisplayValues(), formulas:range.getFormulas()
+    id: sheet.getSheetId(),
+    rows: lastRow,
+    columns: lastColumn,
+    values: range.getDisplayValues(),
+    formulas: range.getFormulas()
   }));
 }
 
 function hotelDbV2HealthCheckDigest_(text) {
-  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text || ''), Utilities.Charset.UTF_8);
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(text || ''),
+    Utilities.Charset.UTF_8
+  );
   return bytes.map(function(value) {
     const normalized = value < 0 ? value + 256 : value;
     return ('0' + normalized.toString(16)).slice(-2);
@@ -286,13 +394,16 @@ function hotelDbV2HealthCheckSnapshotsEqual_(left, right) {
   const leftKeys = Object.keys(left.sheetHashes || {}).sort();
   const rightKeys = Object.keys(right.sheetHashes || {}).sort();
   if (JSON.stringify(leftKeys) !== JSON.stringify(rightKeys)) return false;
-  return leftKeys.every(function(key) { return left.sheetHashes[key] === right.sheetHashes[key]; });
+  return leftKeys.every(function(key) {
+    return left.sheetHashes[key] === right.sheetHashes[key];
+  });
 }
 
 function hotelDbV2HealthCheckSafeMessage_(error) {
   let message = error && error.message ? String(error.message) : String(error || '不明なエラー');
   try {
-    const key = PropertiesService.getScriptProperties().getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY);
+    const key = PropertiesService.getScriptProperties()
+      .getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY);
     if (key) message = message.split(String(key)).join('[API_KEY]');
   } catch (ignore) {}
   return message;
