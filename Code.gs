@@ -13,6 +13,7 @@ function onOpen() {
     .addItem('⚙ 初期セットアップ・設定', 'runHotelDbV2OpenSetup')
     .addItem('🩺 製品全体ヘルスチェック', 'runHotelDbV2HealthCheck')
     .addItem('💾 バックアップ・復元', 'runHotelDbV2OpenBackupRestore')
+    .addItem('🚀 リリース準備チェック', 'runHotelDbV2OpenReleaseReadiness')
     .addSeparator()
     .addItem('① Ver2.0 設定・見出し診断', 'runHotelDbV2Diagnosis')
     .addItem('② Ver2.0 API接続テスト', 'runHotelDbV2ConnectionTest')
