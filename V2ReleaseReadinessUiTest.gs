@@ -16,12 +16,14 @@ function setupHotelDbV2ReleaseReadinessUiTest() {
     throw new Error('前回のPR #25 UIテスト状態が残っています。先に cleanupHotelDbV2ReleaseReadinessUiTest() を実行してください。');
   }
 
-  const snapshot = hotelDbV2ReleaseSnapshot_(ss);
+  const releaseSnapshot = hotelDbV2ReleaseSnapshot_(ss);
+  const healthSnapshot = hotelDbV2HealthCheckSnapshot_(ss);
   store.setProperty(HOTEL_DB_V2_PR25_UI_TEST.STATE_KEY, JSON.stringify({
-    spreadsheetId: snapshot.spreadsheetId,
-    activeSheetId: snapshot.activeSheetId,
-    activeSheetHash: snapshot.activeSheetHash,
-    apiKeyFingerprint: snapshot.apiKeyFingerprint,
+    spreadsheetId: releaseSnapshot.spreadsheetId,
+    activeSheetId: releaseSnapshot.activeSheetId,
+    activeSheetHash: releaseSnapshot.activeSheetHash,
+    apiKeyFingerprint: releaseSnapshot.apiKeyFingerprint,
+    protectedSheetHashes: healthSnapshot.sheetHashes,
     createdAt: new Date().toISOString()
   }));
 
@@ -47,10 +49,18 @@ function testHotelDbV2ReleaseReadinessUiTest() {
   function check(label, condition) { if (!condition) failures.push(label); }
 
   const report = hotelDbV2ReleaseBuildReport_(ss);
-  const current = hotelDbV2ReleaseSnapshot_(ss);
-  const baseline = {
-    spreadsheetId:state.spreadsheetId, activeSheetId:state.activeSheetId,
-    activeSheetHash:state.activeSheetHash, apiKeyFingerprint:state.apiKeyFingerprint
+  const currentRelease = hotelDbV2ReleaseSnapshot_(ss);
+  const currentHealth = hotelDbV2HealthCheckSnapshot_(ss);
+  const baselineRelease = {
+    spreadsheetId: state.spreadsheetId,
+    activeSheetId: state.activeSheetId,
+    activeSheetHash: state.activeSheetHash,
+    apiKeyFingerprint: state.apiKeyFingerprint
+  };
+  const baselineHealth = {
+    spreadsheetId: state.spreadsheetId,
+    apiKeyFingerprint: state.apiKeyFingerprint,
+    sheetHashes: state.protectedSheetHashes || {}
   };
   const html = HtmlService.createHtmlOutputFromFile(HOTEL_DB_V2_RELEASE.DIALOG_FILE).getContent();
   const realKey = PropertiesService.getScriptProperties().getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY) || '';
@@ -70,7 +80,8 @@ function testHotelDbV2ReleaseReadinessUiTest() {
   check('バックアップ安全方式を確認できません。', report.checks.some(function(item){ return item.id === 'BACKUP-NO-INPLACE' && item.severity === 'ok'; }));
   check('リリース準備入口を確認できません。', report.checks.some(function(item){ return item.id === 'ENTRY-RELEASE' && item.severity === 'ok'; }));
   check('データ不変確認が成功していません。', report.checks.some(function(item){ return item.id === 'SAFE-UNCHANGED' && item.severity === 'ok'; }));
-  check('setup時から元データ・運用シート・APIキー状態が変化しています。', hotelDbV2ReleaseSnapshotsEqual_(baseline, current));
+  check('setup時から元データまたはAPIキー状態が変化しています。', hotelDbV2ReleaseSnapshotsEqual_(baselineRelease, currentRelease));
+  check('setup時から運用シートまたはAPIキー状態が変化しています。', hotelDbV2HealthCheckSnapshotsEqual_(baselineHealth, currentHealth));
   check('HTMLタイトルがありません。', html.indexOf('リリース準備チェック') !== -1);
   check('HTMLに再チェックボタンがありません。', html.indexOf('再チェック') !== -1);
   check('HTMLに検証済みバックアップ案内がありません。', html.indexOf('検証済みバックアップ') !== -1);
@@ -89,8 +100,15 @@ function testHotelDbV2ReleaseReadinessUiTest() {
     '次にメニュー「🚀 リリース準備チェック」を開いて目視確認してください。'
   ].join('\n'));
 
-  return {success:true, overall:report.overall, blockers:report.blockingCount, environment:report.environment.kind,
-    externalApi:false, driveWrites:false, operationalWrites:false};
+  return {
+    success:true,
+    overall:report.overall,
+    blockers:report.blockingCount,
+    environment:report.environment.kind,
+    externalApi:false,
+    driveWrites:false,
+    operationalWrites:false
+  };
 }
 
 function cleanupHotelDbV2ReleaseReadinessUiTest() {
@@ -105,12 +123,21 @@ function cleanupHotelDbV2ReleaseReadinessUiTest() {
   const state = JSON.parse(raw);
   if (state.spreadsheetId !== ss.getId()) throw new Error('setup時と異なるスプレッドシートです。元のコピー版でcleanupしてください。');
 
-  const current = hotelDbV2ReleaseSnapshot_(ss);
-  const baseline = {
-    spreadsheetId:state.spreadsheetId, activeSheetId:state.activeSheetId,
-    activeSheetHash:state.activeSheetHash, apiKeyFingerprint:state.apiKeyFingerprint
+  const currentRelease = hotelDbV2ReleaseSnapshot_(ss);
+  const currentHealth = hotelDbV2HealthCheckSnapshot_(ss);
+  const baselineRelease = {
+    spreadsheetId: state.spreadsheetId,
+    activeSheetId: state.activeSheetId,
+    activeSheetHash: state.activeSheetHash,
+    apiKeyFingerprint: state.apiKeyFingerprint
   };
-  if (!hotelDbV2ReleaseSnapshotsEqual_(baseline, current)) {
+  const baselineHealth = {
+    spreadsheetId: state.spreadsheetId,
+    apiKeyFingerprint: state.apiKeyFingerprint,
+    sheetHashes: state.protectedSheetHashes || {}
+  };
+  if (!hotelDbV2ReleaseSnapshotsEqual_(baselineRelease, currentRelease) ||
+      !hotelDbV2HealthCheckSnapshotsEqual_(baselineHealth, currentHealth)) {
     throw new Error('cleanup前確認で元データ・運用シートまたはAPIキーの状態変化を検出しました。一時状態は削除せず停止します。');
   }
 
