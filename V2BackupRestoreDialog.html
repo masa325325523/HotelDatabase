@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; color: #17324d; background: #f5f8fb; }
+    .wrap { padding: 0 22px 22px; }
+    .hero { background:#173f63; color:#fff; margin:0 -22px 18px; padding:26px 28px; }
+    .hero h1 { margin:0 0 8px; font-size:24px; }
+    .hero p { margin:0; line-height:1.6; }
+    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
+    .card { background:#fff; border:1px solid #d7e1ea; border-radius:10px; padding:14px; }
+    .label { color:#6b7f92; font-size:12px; margin-bottom:6px; }
+    .value { font-size:17px; font-weight:700; }
+    .ok { color:#147a3f; }
+    .warn { color:#9a6500; }
+    .section { background:#fff; border:1px solid #d7e1ea; border-radius:12px; margin:14px 0; overflow:hidden; }
+    .section h2 { font-size:18px; margin:0; padding:15px 18px; background:#eaf1f7; }
+    .body { padding:16px 18px; }
+    button { border:0; border-radius:7px; padding:10px 15px; font-weight:700; cursor:pointer; }
+    .primary { background:#1976b9; color:#fff; }
+    .secondary { background:#e8eef4; color:#17324d; }
+    .danger-note { background:#fff4e6; border:1px solid #f0c98a; border-radius:8px; padding:12px; line-height:1.6; margin:12px 0; }
+    .safe-note { background:#edf8f1; border:1px solid #b8dfc5; border-radius:8px; padding:12px; line-height:1.6; margin:12px 0; }
+    .backup { border-top:1px solid #e2e8ee; padding:13px 0; }
+    .backup:first-child { border-top:0; }
+    .backup-title { font-weight:700; margin-bottom:5px; word-break:break-all; }
+    .meta { font-size:12px; color:#6b7f92; line-height:1.6; }
+    .actions { margin-top:9px; display:flex; gap:8px; flex-wrap:wrap; }
+    .message { display:none; margin-top:12px; padding:12px; border-radius:8px; line-height:1.6; white-space:pre-wrap; }
+    .message.show { display:block; }
+    .message.success { background:#edf8f1; border:1px solid #b8dfc5; color:#116333; }
+    .message.error { background:#fff0f0; border:1px solid #e7b4b4; color:#9f2222; }
+    .spinner { color:#6b7f92; }
+    a { color:#1269a6; font-weight:700; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <h1>宿泊施設DB Ver2.0　バックアップ・復元</h1>
+    <p>現在の本番ファイルを上書きせず、検証済みコピーから安全に復元候補を作成します。</p>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="label">元ファイル</div><div id="sourceName" class="value">確認中</div></div>
+    <div class="card"><div class="label">保存先</div><div id="folderState" class="value">確認中</div></div>
+    <div class="card"><div class="label">検証済みバックアップ</div><div id="backupCount" class="value">0</div></div>
+    <div class="card"><div class="label">上書き復元</div><div class="value ok">しない</div></div>
+  </div>
+
+  <div class="safe-note">
+    復元は現在のスプレッドシートへ書き戻しません。選択したバックアップから別の「復元候補」ファイルを作成し、値・数式のフィンガープリント一致を確認してから案内します。
+  </div>
+
+  <div class="danger-note">
+    Google SheetsのコピーにはバインドされたApps Scriptも含まれます。バックアップ・復元候補は機密ファイルとして扱い、外部共有しないでください。APIキー本体はこの画面やバックアップ管理メタデータへ表示・保存しません。
+  </div>
+
+  <div class="section">
+    <h2>1. 新しいバックアップ</h2>
+    <div class="body">
+      <p>現在のスプレッドシートをDriveへ完全コピーし、元ファイルとコピーの値・数式フィンガープリントが一致した場合だけ「検証済み」として登録します。</p>
+      <button id="createBtn" class="primary" onclick="createBackup()">バックアップを作成</button>
+      <div id="createMessage" class="message"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>2. 検証済みバックアップ</h2>
+    <div class="body">
+      <div id="backupList" class="spinner">読み込み中...</div>
+      <div id="restoreMessage" class="message"></div>
+    </div>
+  </div>
+
+  <div class="actions"><button class="secondary" onclick="loadStatus()">一覧を再読み込み</button></div>
+</div>
+
+<script>
+  function setMessage(id, kind, text, url) {
+    const el = document.getElementById(id);
+    el.className = 'message show ' + kind;
+    el.textContent = text || '';
+    if (url) {
+      const br = document.createElement('br');
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'ファイルを開く';
+      el.appendChild(br);
+      el.appendChild(link);
+    }
+  }
+
+  function loadStatus() {
+    document.getElementById('backupList').textContent = '読み込み中...';
+    google.script.run
+      .withSuccessHandler(renderStatus)
+      .withFailureHandler(function(err){ setMessage('restoreMessage','error',safeError(err)); })
+      .hotelDbV2BackupGetStatus();
+  }
+
+  function renderStatus(status) {
+    document.getElementById('sourceName').textContent = status.source ? status.source.name : '取得不可';
+    document.getElementById('folderState').textContent = status.folderConfigured ? '準備済み' : '未作成';
+    document.getElementById('folderState').className = 'value ' + (status.folderConfigured ? 'ok' : 'warn');
+    document.getElementById('backupCount').textContent = String(status.backupCount || 0);
+    const list = document.getElementById('backupList');
+    list.innerHTML = '';
+    const backups = status.backups || [];
+    if (!backups.length) { list.textContent = 'まだ検証済みバックアップはありません。'; return; }
+    backups.forEach(function(item) {
+      const row = document.createElement('div'); row.className = 'backup';
+      const title = document.createElement('div'); title.className = 'backup-title'; title.textContent = item.name;
+      const meta = document.createElement('div'); meta.className = 'meta';
+      meta.textContent = '作成: ' + item.createdAt + ' / シート: ' + item.sheetCount + ' / 使用セル: ' + item.usedCells + ' / 指紋: ' + item.fingerprint;
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const open = document.createElement('a'); open.href = item.url; open.target = '_blank'; open.rel = 'noopener noreferrer'; open.textContent = 'バックアップを開く';
+      const restore = document.createElement('button'); restore.className = 'secondary'; restore.textContent = '復元候補を作成';
+      restore.onclick = function(){ createRecovery(item.id, item.name); };
+      actions.appendChild(open); actions.appendChild(restore);
+      row.appendChild(title); row.appendChild(meta); row.appendChild(actions); list.appendChild(row);
+    });
+  }
+
+  function createBackup() {
+    if (!confirm('現在のスプレッドシートをDriveへ完全コピーしてバックアップします。作成中はシートを編集しないでください。続行しますか？')) return;
+    const btn = document.getElementById('createBtn'); btn.disabled = true;
+    setMessage('createMessage','success','バックアップを作成・検証中です。完了まで編集せずお待ちください。');
+    google.script.run
+      .withSuccessHandler(function(result){
+        btn.disabled = false;
+        setMessage('createMessage','success','検証済みバックアップを作成しました。\n現在の本番ファイルは変更していません。', result.backup && result.backup.url);
+        renderStatus(result.status);
+      })
+      .withFailureHandler(function(err){ btn.disabled = false; setMessage('createMessage','error',safeError(err)); })
+      .hotelDbV2BackupCreate();
+  }
+
+  function createRecovery(id, name) {
+    if (!confirm('「' + name + '」から別ファイルの復元候補を作成します。現在の本番ファイルは上書きしません。続行しますか？')) return;
+    setMessage('restoreMessage','success','バックアップを再検証し、復元候補を作成しています。');
+    google.script.run
+      .withSuccessHandler(function(result){
+        setMessage('restoreMessage','success','復元候補を作成し、バックアップとの一致を確認しました。\n現在の本番ファイルは上書きしていません。復元候補を開いて内容を確認してください。', result.recovery && result.recovery.url);
+        renderStatus(result.status);
+      })
+      .withFailureHandler(function(err){ setMessage('restoreMessage','error',safeError(err)); })
+      .hotelDbV2BackupCreateRecovery(id);
+  }
+
+  function safeError(err) { return err && err.message ? err.message : String(err || '不明なエラーが発生しました。'); }
+  loadStatus();
+</script>
+</body>
+</html>
