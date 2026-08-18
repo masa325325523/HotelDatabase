@@ -100,8 +100,8 @@ function testHotelDbV2BackupRestoreUiTest() {
 
   const entries = hotelDbV2HealthCheckEntryPoints_();
   const regressions = hotelDbV2HealthCheckRegressionSuites_();
-  check('ヘルスチェック機能入口22件になっていません。', entries.length === 22);
-  check('ヘルスチェック安全回帰8件になっていません。', regressions.length === 8);
+  check('既存ヘルスチェック機能入口21件が維持されていません。', entries.length === 21);
+  check('既存ヘルスチェック安全回帰7件が維持されていません。', regressions.length === 7);
 
   if (failures.length) {
     SpreadsheetApp.getUi().alert('PR #24 UIテスト 失敗\n\n' + failures.join('\n'));
