@@ -107,10 +107,10 @@ function runHotelDbV2BackupRestoreTests() {
 
   const entries = hotelDbV2HealthCheckEntryPoints_();
   const regressions = hotelDbV2HealthCheckRegressionSuites_();
-  check('HEALTH-01 entries 22', entries.length === 22, 'actual=' + entries.length);
-  check('HEALTH-02 backup entry', entries.some(function(item){ return item.id === 'ENTRY-BACKUP' && item.exists; }));
-  check('HEALTH-03 regressions 8', regressions.length === 8, 'actual=' + regressions.length);
-  check('HEALTH-04 pr24 regression', regressions.some(function(item){ return item.id === 'REG-24' && item.exists; }));
+  check('HEALTH-01 existing entries remain 21', entries.length === 21, 'actual=' + entries.length);
+  check('HEALTH-02 no health scope change', !entries.some(function(item){ return item.id === 'ENTRY-BACKUP'; }));
+  check('HEALTH-03 existing regressions remain 7', regressions.length === 7, 'actual=' + regressions.length);
+  check('HEALTH-04 no regression scope change', !regressions.some(function(item){ return item.id === 'REG-24'; }));
 
   check('SAFETY-01 public create exists', typeof hotelDbV2BackupCreate === 'function');
   check('SAFETY-02 public recovery exists', typeof hotelDbV2BackupCreateRecovery === 'function');
