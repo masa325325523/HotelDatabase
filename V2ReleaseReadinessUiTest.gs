@@ -5,7 +5,7 @@
  * 読み取り専用。User PropertiesにはAPIキー本体を含まない指紋だけを一時保存する。
  */
 const HOTEL_DB_V2_PR25_UI_TEST = Object.freeze({
-  STATE_KEY: 'HOTEL_DB_V2_RELEASE_UI_BASELINE'
+  STATE_KEY: 'HOTEL_DB_V2_PR25_RELEASE_UI_STATE'
 });
 
 function setupHotelDbV2ReleaseReadinessUiTest() {
