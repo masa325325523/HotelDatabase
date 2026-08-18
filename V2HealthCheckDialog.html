@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    :root {
+      --navy:#173f63; --navy2:#214f78; --bg:#f5f8fb; --line:#d9e3ec;
+      --text:#17324d; --muted:#63778c; --ok:#117a43; --okbg:#eaf7ef;
+      --warn:#9a6500; --warnbg:#fff7df; --crit:#b3261e; --critbg:#fdecea;
+      --info:#41667e; --infobg:#eef4f8;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial,"Noto Sans JP",sans-serif; color:var(--text); background:var(--bg); }
+    .hero { background:var(--navy); color:white; padding:22px 26px; }
+    .hero h1 { margin:0 0 6px; font-size:24px; }
+    .hero p { margin:0; opacity:.9; font-size:13px; }
+    .wrap { padding:18px 22px 26px; }
+    .summary { display:grid; grid-template-columns:1.3fr repeat(4,1fr); gap:10px; margin-bottom:16px; }
+    .card { background:white; border:1px solid var(--line); border-radius:10px; padding:14px; }
+    .k { color:var(--muted); font-size:12px; margin-bottom:5px; }
+    .v { font-weight:700; font-size:18px; }
+    .overall.normal { color:var(--ok); }
+    .overall.review { color:var(--warn); }
+    .overall.critical { color:var(--crit); }
+    .note { background:var(--infobg); border:1px solid #cddfea; padding:11px 13px; border-radius:8px; font-size:12px; line-height:1.55; margin-bottom:16px; }
+    .section { background:white; border:1px solid var(--line); border-radius:10px; margin-bottom:12px; overflow:hidden; }
+    .section h2 { margin:0; padding:12px 15px; background:#edf3f8; font-size:15px; }
+    .item { display:grid; grid-template-columns:110px 1fr; gap:10px; padding:11px 14px; border-top:1px solid #eef2f5; }
+    .badge { display:inline-block; padding:4px 8px; border-radius:999px; font-size:11px; font-weight:700; width:max-content; }
+    .ok { color:var(--ok); background:var(--okbg); }
+    .warning { color:var(--warn); background:var(--warnbg); }
+    .critical { color:var(--crit); background:var(--critbg); }
+    .info { color:var(--info); background:var(--infobg); }
+    .label { font-weight:700; font-size:13px; margin-bottom:3px; }
+    .detail { color:var(--muted); font-size:12px; line-height:1.45; }
+    .actions { background:white; border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:14px; }
+    .actions h2 { margin:0 0 10px; font-size:15px; }
+    .actions li { margin:7px 0; font-size:12px; line-height:1.45; }
+    .footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:16px; }
+    button { border:0; border-radius:7px; padding:10px 16px; font-weight:700; cursor:pointer; }
+    .primary { background:#1473b8; color:white; }
+    .secondary { background:#e7eef4; color:var(--text); }
+    .meta { color:var(--muted); font-size:11px; }
+    .loading { padding:48px 20px; text-align:center; color:var(--muted); }
+    .error { margin:20px; background:var(--critbg); color:var(--crit); border:1px solid #f1c3bf; border-radius:8px; padding:16px; white-space:pre-wrap; }
+    @media (max-width:720px) { .summary { grid-template-columns:1fr 1fr; } .item { grid-template-columns:90px 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>宿泊施設DB Ver2.0　製品全体ヘルスチェック</h1>
+    <p>設定・機能入口・運用シート・安全契約を、元データを書き換えずに確認します。</p>
+  </div>
+  <div id="content" class="loading">診断中です…</div>
+
+  <script>
+    function esc(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    function sevLabel(sev) {
+      return {ok:'正常',info:'情報',warning:'要確認',critical:'重大'}[sev] || '要確認';
+    }
+    function overallClass(value) {
+      if (value === '正常') return 'normal';
+      if (value === '重大') return 'critical';
+      return 'review';
+    }
+    function render(report) {
+      var c = report.counts || {};
+      var html = '<div class="wrap">';
+      html += '<div class="summary">' +
+        '<div class="card"><div class="k">全体状態</div><div class="v overall '+overallClass(report.overall)+'">'+esc(report.overall)+'</div></div>' +
+        '<div class="card"><div class="k">正常</div><div class="v">'+esc(c.ok||0)+'</div></div>' +
+        '<div class="card"><div class="k">要確認</div><div class="v">'+esc(c.warning||0)+'</div></div>' +
+        '<div class="card"><div class="k">重大</div><div class="v">'+esc(c.critical||0)+'</div></div>' +
+        '<div class="card"><div class="k">情報</div><div class="v">'+esc(c.info||0)+'</div></div>' +
+        '</div>';
+      html += '<div class="note">Google Places APIはこのヘルスチェックでは自動呼び出ししません。通信確認が必要な場合は「⚙ 初期セットアップ・設定」の接続テストを明示的に実行してください。APIキー本体はこの画面へ返しません。</div>';
+
+      (report.sections || []).forEach(function(section) {
+        html += '<div class="section"><h2>'+esc(section.name)+'</h2>';
+        (section.items || []).forEach(function(item) {
+          html += '<div class="item"><div><span class="badge '+esc(item.severity)+'">'+esc(sevLabel(item.severity))+'</span></div>' +
+            '<div><div class="label">'+esc(item.label)+'</div><div class="detail">'+esc(item.detail)+'</div></div></div>';
+        });
+        html += '</div>';
+      });
+
+      if ((report.recommendations || []).length) {
+        html += '<div class="actions"><h2>次に確認すること</h2><ol>';
+        report.recommendations.forEach(function(item) {
+          html += '<li><strong>'+esc(item.label)+'</strong> — '+esc(item.action)+'</li>';
+        });
+        html += '</ol></div>';
+      }
+
+      html += '<div class="footer"><div class="meta">確認日時: '+esc(report.checkedAt)+' ／ 所要時間: '+esc(report.durationMs)+'ms ／ 外部API呼出: なし</div>' +
+        '<div><button class="secondary" onclick="google.script.host.close()">閉じる</button> ' +
+        '<button class="primary" onclick="reload()">再診断</button></div></div>';
+      html += '</div>';
+      document.getElementById('content').className = '';
+      document.getElementById('content').innerHTML = html;
+    }
+    function renderError(error) {
+      document.getElementById('content').className = 'error';
+      document.getElementById('content').textContent = 'ヘルスチェックに失敗しました。\n\n' + (error && error.message ? error.message : String(error));
+    }
+    function reload() {
+      document.getElementById('content').className = 'loading';
+      document.getElementById('content').textContent = '再診断中です…';
+      google.script.run.withSuccessHandler(render).withFailureHandler(renderError).hotelDbV2HealthCheckGetReport();
+    }
+    reload();
+  </script>
+</body>
+</html>
