@@ -123,6 +123,9 @@ function runHotelDbV2BackupRestoreTests() {
   check('UITIME-02 setup exists', typeof setupHotelDbV2BackupRestoreUiTest === 'function');
   check('UITIME-03 cleanup exists', typeof cleanupHotelDbV2BackupRestoreUiTest === 'function');
 
+  const expectedCount = 71;
+  check('TEST-COUNT current definition', passed + failures.length === expectedCount, 'actual=' + (passed + failures.length) + ', expected=' + expectedCount);
+
   const message = [
     failures.length ? 'PR #24 自己診断 失敗' : 'PR #24 自己診断 成功', '',
     '成功件数: ' + passed + '件', '失敗件数: ' + failures.length + '件',
