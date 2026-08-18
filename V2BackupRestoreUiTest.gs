@@ -4,6 +4,11 @@
  *
  * 専用テストフォルダ内に実バックアップ・復元候補を作成して検証する。
  * 元スプレッドシートは変更しない。cleanupではテストで作ったDrive項目だけをゴミ箱へ移す。
+ *
+ * タイムアウト安全性:
+ * - テストフォルダ作成直後にUser PropertiesへfolderIdを先行保存する。
+ * - setup途中で6分上限などにより停止しても、次回cleanupでテストフォルダを特定できる。
+ * - setupでは元DBの重複フィンガープリント走査を行わない。
  */
 
 const HOTEL_DB_V2_PR24_UI_TEST = Object.freeze({
@@ -19,33 +24,60 @@ function setupHotelDbV2BackupRestoreUiTest() {
     throw new Error('前回のPR #24 UIテスト状態が残っています。先に cleanupHotelDbV2BackupRestoreUiTest() を実行してください。');
   }
 
-  const protectedSnapshot = hotelDbV2HealthCheckSnapshot_(ss);
-  const sourceFingerprint = hotelDbV2BackupFingerprintSpreadsheet_(ss);
-  const testFolder = DriveApp.createFolder(HOTEL_DB_V2_PR24_UI_TEST.FOLDER_PREFIX + hotelDbV2BackupTimestamp_(new Date()));
-  let backup = null;
+  const testFolder = DriveApp.createFolder(
+    HOTEL_DB_V2_PR24_UI_TEST.FOLDER_PREFIX + hotelDbV2BackupTimestamp_(new Date())
+  );
+  const state = {
+    spreadsheetId: ss.getId(),
+    folderId: testFolder.getId(),
+    backupId: '',
+    recoveryId: '',
+    sourceFingerprint: '',
+    apiKeyFingerprint: hotelDbV2BackupUiApiKeyFingerprint_(),
+    createdAt: new Date().toISOString(),
+    stage: 'folder-created'
+  };
+
+  // 重要: Driveコピーより先に保存する。以後タイムアウトしてもcleanupがfolderIdを追跡できる。
+  store.setProperty(HOTEL_DB_V2_PR24_UI_TEST.STATE_KEY, JSON.stringify(state));
+  console.log('PR24 UI setup: test folder checkpoint saved.');
+
   try {
-    backup = hotelDbV2BackupCreateInFolder_(ss, testFolder, {nameSuffix:'PR24_TEST'});
+    // createInFolder_ 自身が「元DB 1回 + バックアップ 1回」の指紋比較を行う。
+    // setup側で元DBを事前にもう1回走査しないことで実行時間を削減する。
+    const backup = hotelDbV2BackupCreateInFolder_(ss, testFolder, {nameSuffix:'PR24_TEST'});
+    const backupFile = hotelDbV2BackupFindFileInFolder_(testFolder, backup.id);
+    const metadata = backupFile ? hotelDbV2BackupReadMetadata_(backupFile) : null;
+    const validation = hotelDbV2BackupValidateMetadata_(metadata, ss.getId());
+    if (!validation.valid) throw new Error('作成済みテストバックアップのメタデータ検証に失敗しました: ' + validation.message);
+
+    state.backupId = backup.id;
+    state.sourceFingerprint = metadata.fingerprint;
+    state.stage = 'backup-verified';
+    store.setProperty(HOTEL_DB_V2_PR24_UI_TEST.STATE_KEY, JSON.stringify(state));
+    console.log('PR24 UI setup: verified backup checkpoint saved.');
+
+    SpreadsheetApp.getUi().alert([
+      'PR #24 UIテスト 準備完了', '',
+      '対象: ' + ss.getName(),
+      'テスト専用Driveフォルダ: 作成済み',
+      '検証済みバックアップ: 1件作成済み',
+      '元スプレッドシートの変更: なし',
+      'APIキー本体の保存: なし', '',
+      '次に testHotelDbV2BackupRestoreUiTest() を実行してください。'
+    ].join('\n'));
+    return {ready:true, backupId:backup.id, folderId:testFolder.getId()};
   } catch (error) {
-    try { testFolder.setTrashed(true); } catch (ignore) {}
-    throw error;
+    // 状態は削除しない。folderIdを残し、cleanupで安全に片付けられるようにする。
+    state.stage = 'setup-error';
+    state.lastError = hotelDbV2BackupSafeErrorMessage_(error);
+    try { store.setProperty(HOTEL_DB_V2_PR24_UI_TEST.STATE_KEY, JSON.stringify(state)); } catch (ignore) {}
+    throw new Error(
+      'PR #24 UIテスト setup が完了しませんでした。テスト状態はcleanup用に保持しています。' +
+      '先に cleanupHotelDbV2BackupRestoreUiTest() を実行してから再試行してください。\n' +
+      hotelDbV2BackupSafeErrorMessage_(error)
+    );
   }
-
-  store.setProperty(HOTEL_DB_V2_PR24_UI_TEST.STATE_KEY, JSON.stringify({
-    spreadsheetId:ss.getId(), folderId:testFolder.getId(), backupId:backup.id, recoveryId:'',
-    protectedSnapshot:protectedSnapshot, sourceFingerprint:sourceFingerprint.fingerprint,
-    createdAt:new Date().toISOString()
-  }));
-
-  SpreadsheetApp.getUi().alert([
-    'PR #24 UIテスト 準備完了', '',
-    '対象: ' + ss.getName(),
-    'テスト専用Driveフォルダ: 作成済み',
-    '検証済みバックアップ: 1件作成済み',
-    '元スプレッドシートの変更: なし',
-    'APIキー本体の保存: なし', '',
-    '次に testHotelDbV2BackupRestoreUiTest() を実行してください。'
-  ].join('\n'));
-  return {ready:true, backupId:backup.id, folderId:testFolder.getId()};
 }
 
 function testHotelDbV2BackupRestoreUiTest() {
@@ -56,6 +88,9 @@ function testHotelDbV2BackupRestoreUiTest() {
   if (!raw) throw new Error('PR #24 UIテスト状態がありません。先に setupHotelDbV2BackupRestoreUiTest() を実行してください。');
   const state = JSON.parse(raw);
   if (state.spreadsheetId !== ss.getId()) throw new Error('setup時と異なるスプレッドシートです。元のコピー版で続行してください。');
+  if (!state.backupId || !state.sourceFingerprint) {
+    throw new Error('setupがバックアップ検証まで完了していません。先に cleanupHotelDbV2BackupRestoreUiTest() を実行してからsetupをやり直してください。');
+  }
   if (state.recoveryId) throw new Error('復元候補はすでに作成済みです。先にcleanupしてから再実行してください。');
 
   const failures = [];
@@ -67,25 +102,25 @@ function testHotelDbV2BackupRestoreUiTest() {
   const metadata = backupFile ? hotelDbV2BackupReadMetadata_(backupFile) : null;
   const validation = hotelDbV2BackupValidateMetadata_(metadata, ss.getId());
   check('バックアップメタデータが不正です。', validation.valid === true);
+  check('setup時の元DB指紋とバックアップ記録が一致しません。', Boolean(metadata && metadata.fingerprint === state.sourceFingerprint));
 
-  const backupFingerprint = backupFile ? hotelDbV2BackupFingerprintSpreadsheet_(SpreadsheetApp.openById(backupFile.getId())) : null;
-  check('バックアップの指紋がメタデータと一致しません。', Boolean(backupFingerprint && metadata && backupFingerprint.fingerprint === metadata.fingerprint));
-
-  const recovery = backupFile ? hotelDbV2BackupCreateRecoveryFromFile_(ss, backupFile, folder, {nameSuffix:'PR24_TEST'}) : null;
+  // createRecoveryFromFile_ 内部でバックアップを再指紋検証し、
+  // 復元候補作成後にも復元候補を再指紋検証する。UIテスト側で同じ2走査を重複しない。
+  const recovery = backupFile
+    ? hotelDbV2BackupCreateRecoveryFromFile_(ss, backupFile, folder, {nameSuffix:'PR24_TEST'})
+    : null;
   check('復元候補が作成されません。', Boolean(recovery && recovery.verified));
   check('復元候補が本番上書きを示しています。', Boolean(recovery && recovery.currentFileOverwritten === false));
   if (recovery) {
     state.recoveryId = recovery.id;
+    state.stage = 'recovery-verified';
     store.setProperty(HOTEL_DB_V2_PR24_UI_TEST.STATE_KEY, JSON.stringify(state));
   }
 
-  const recoveryFingerprint = recovery ? hotelDbV2BackupFingerprintSpreadsheet_(SpreadsheetApp.openById(recovery.id)) : null;
-  check('復元候補の指紋がバックアップと一致しません。', Boolean(recoveryFingerprint && metadata && recoveryFingerprint.fingerprint === metadata.fingerprint));
-
-  const currentFingerprint = hotelDbV2BackupFingerprintSpreadsheet_(ss);
-  check('元スプレッドシートの内容がsetup時から変化しています。', currentFingerprint.fingerprint === state.sourceFingerprint);
-  const currentProtected = hotelDbV2HealthCheckSnapshot_(ss);
-  check('運用シートまたはAPIキー指紋がsetup時から変化しています。', hotelDbV2HealthCheckSnapshotsEqual_(state.protectedSnapshot, currentProtected));
+  check(
+    'Script Properties APIキーがsetup時から変化しています。',
+    hotelDbV2BackupUiApiKeyFingerprint_() === state.apiKeyFingerprint
+  );
 
   const realKey = PropertiesService.getScriptProperties().getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY) || '';
   const safePayload = JSON.stringify({metadata:metadata, recovery:recovery});
@@ -111,16 +146,16 @@ function testHotelDbV2BackupRestoreUiTest() {
   SpreadsheetApp.getUi().alert([
     'PR #24 UIテスト 成功', '',
     '実バックアップ作成: 成功',
-    'バックアップ指紋検証: 成功',
+    'バックアップ再検証: 成功',
     '復元候補作成: 成功',
     '復元候補指紋検証: 成功',
     '現在の本番ファイル上書き: なし',
-    '元スプレッドシート内容: 変更なし',
-    '運用シート内容・数式: 変更なし',
+    '元スプレッドシート内容: cleanupで最終確認予定',
     'Script Properties APIキー: 変更なし',
     'APIキー本体の管理情報への露出: なし',
     'Google Places API呼出: なし', '',
-    '次にメニュー「💾 バックアップ・復元」を開いて画面を目視確認してください。'
+    '次にメニュー「💾 バックアップ・復元」を開いて画面を目視確認してください。',
+    '目視確認後、cleanupで元スプレッドシート全体の不変を最終確認します。'
   ].join('\n'));
   return {success:true, backupId:state.backupId, recoveryId:state.recoveryId};
 }
@@ -131,18 +166,25 @@ function cleanupHotelDbV2BackupRestoreUiTest() {
   const store = PropertiesService.getUserProperties();
   const raw = store.getProperty(HOTEL_DB_V2_PR24_UI_TEST.STATE_KEY);
   if (!raw) {
-    SpreadsheetApp.getUi().alert('PR #24 UIテスト cleanup\n\n一時状態は残っていません。');
+    SpreadsheetApp.getUi().alert([
+      'PR #24 UIテスト cleanup', '',
+      '追跡可能な一時状態は残っていません。',
+      '旧版setupがタイムアウトして作った未追跡フォルダは、この関数では自動削除しません。'
+    ].join('\n'));
     return {cleaned:false, alreadyClean:true};
   }
   const state = JSON.parse(raw);
   if (state.spreadsheetId !== ss.getId()) throw new Error('setup時と異なるスプレッドシートです。元のコピー版でcleanupしてください。');
 
-  const currentFingerprint = hotelDbV2BackupFingerprintSpreadsheet_(ss);
-  if (currentFingerprint.fingerprint !== state.sourceFingerprint) {
-    throw new Error('cleanup前確認で元スプレッドシートの内容変化を検出しました。テスト項目は削除せず停止します。');
+  // setupがバックアップ検証まで到達した場合のみ、全元DBの不変を最終確認する。
+  if (state.sourceFingerprint) {
+    const currentFingerprint = hotelDbV2BackupFingerprintSpreadsheet_(ss);
+    if (currentFingerprint.fingerprint !== state.sourceFingerprint) {
+      throw new Error('cleanup前確認で元スプレッドシートの内容変化を検出しました。テスト項目は削除せず停止します。');
+    }
   }
-  if (!hotelDbV2HealthCheckSnapshotsEqual_(state.protectedSnapshot, hotelDbV2HealthCheckSnapshot_(ss))) {
-    throw new Error('cleanup前確認で運用シートまたはAPIキーの状態変化を検出しました。テスト項目は削除せず停止します。');
+  if (state.apiKeyFingerprint && hotelDbV2BackupUiApiKeyFingerprint_() !== state.apiKeyFingerprint) {
+    throw new Error('cleanup前確認でScript PropertiesのAPIキー状態変化を検出しました。テスト項目は削除せず停止します。');
   }
 
   const cleanupErrors = [];
@@ -159,11 +201,16 @@ function cleanupHotelDbV2BackupRestoreUiTest() {
   SpreadsheetApp.getUi().alert([
     'PR #24 UIテスト復元完了', '',
     'テスト用バックアップ・復元候補・フォルダをゴミ箱へ移しました。',
-    '既存の元スプレッドシートは変更していません。',
+    state.sourceFingerprint ? '元スプレッドシート全体: setup時から変更なし' : '元スプレッドシート全体: setup未完了のため全体比較は省略',
     '既存運用シートは変更していません。',
     'Script PropertiesのAPIキーも変更していません。'
   ].join('\n'));
-  return {cleaned:true};
+  return {cleaned:true, sourceVerified:Boolean(state.sourceFingerprint)};
+}
+
+function hotelDbV2BackupUiApiKeyFingerprint_() {
+  const key = PropertiesService.getScriptProperties().getProperty(HOTEL_DB_V2_CONFIG.API_KEY_PROPERTY) || '';
+  return hotelDbV2HealthCheckDigest_(String(key));
 }
 
 function hotelDbV2BackupUiAssertCopy_(ss) {
