@@ -118,6 +118,11 @@ function runHotelDbV2BackupRestoreTests() {
   check('SAFETY-04 menu exists', typeof runHotelDbV2OpenBackupRestore === 'function');
   check('SAFETY-05 no in-place flag', HOTEL_DB_V2_BACKUP.SAFETY_MARKER.indexOf('no-in-place-restore') !== -1);
 
+  // UIテストのタイムアウト安全契約。Driveコピーは実行しない。
+  check('UITIME-01 api fingerprint helper exists', typeof hotelDbV2BackupUiApiKeyFingerprint_ === 'function');
+  check('UITIME-02 setup exists', typeof setupHotelDbV2BackupRestoreUiTest === 'function');
+  check('UITIME-03 cleanup exists', typeof cleanupHotelDbV2BackupRestoreUiTest === 'function');
+
   const message = [
     failures.length ? 'PR #24 自己診断 失敗' : 'PR #24 自己診断 成功', '',
     '成功件数: ' + passed + '件', '失敗件数: ' + failures.length + '件',
