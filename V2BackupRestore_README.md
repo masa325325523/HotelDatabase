@@ -75,11 +75,13 @@ APIキーのScript Propertyは変更しません。
 - 既存ヘルスチェック21入口 / 7安全回帰が不変であること
 - UIテストのタイムアウト安全用ヘルパー / setup / cleanup入口
 
+旧版では68項目で68/68成功済みですが、タイムアウト安全修正後に3項目を追加したため、現行headでは71/71の再確認が必要です。
+
 ## コピー版UIテスト
 
 対象: `宿泊施設DB_PR13_⑧反映テスト`
 
-1. `runHotelDbV2BackupRestoreTests()`
+1. `runHotelDbV2BackupRestoreTests()`（現行71/71期待）
 2. `runHotelDbV2HealthCheckTests()`（既存PR #23回帰、99/99期待）
 3. `setupHotelDbV2BackupRestoreUiTest()`
 4. `testHotelDbV2BackupRestoreUiTest()`
